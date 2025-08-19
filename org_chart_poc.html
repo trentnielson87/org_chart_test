@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Collapsible Org Chart - Fit Width, Scroll Height</title>
+<title>Collapsible Org Chart - Full Working</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
   body { font-family: Arial, sans-serif; margin:0; padding:0; }
@@ -18,19 +18,20 @@
 <div id="controls">
   <button id="toggleExpand">Toggle Expand All</button>
 </div>
-<h2 style="margin-left:20px;">Collapsible Org Chart - Fit Width, Scroll Height</h2>
+<h2 style="margin-left:20px;">Collapsible Org Chart - Full Working</h2>
 <svg></svg>
 
 <script>
 const sheetId = "1xZAsHK_U8BajMe2d2pMEkSvQnrV2t7Ds08v_YeKgVAQ";
 const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json`;
 
-let allRoots = [];
-let expandAll = false;
 const NODE_WIDTH = 140;
 const NODE_HEIGHT = 50;
 const VERTICAL_MARGIN = 80;
 const MAX_PHOTO_SIZE = 60;
+
+let allRoots = [];
+let expandAll = false;
 
 const svg = d3.select("svg");
 const g = svg.append("g").attr("transform", "translate(80,40)");
@@ -57,7 +58,7 @@ function buildForest(pairs) {
   const nodes = {};
   const childrenSet = new Set();
 
-  // Create nodes for all managers and employees
+  // Create nodes
   pairs.forEach(({manager, employee, title, photo}) => {
     if(manager && !nodes[manager]) nodes[manager] = { name: manager, title:"", photo:"", children: [] };
     if(employee && !nodes[employee]) nodes[employee] = { name: employee, title, photo, children: [] };
@@ -69,38 +70,27 @@ function buildForest(pairs) {
     if(manager && employee) nodes[manager].children.push(nodes[employee]);
   });
 
-  // Roots = nodes that are never children
+  // Identify roots (nodes never children)
   allRoots = Object.values(nodes).filter(n => !childrenSet.has(n.name));
 }
 
 function drawForest() {
   g.selectAll("*").remove();
 
-  // Only constrain width, not height
-  const treeWidth = window.innerWidth - NODE_WIDTH - 40;
-  const tree = d3.tree().nodeSize([NODE_HEIGHT + 60, NODE_WIDTH + 60]);
+  // Create a dummy root for disconnected nodes
+  const dummyRoot = { name: "ROOT", children: allRoots };
 
-  let yOffset = 0;
-  let totalHeight = 0;
+  const tree = d3.tree().nodeSize([NODE_HEIGHT+60, NODE_WIDTH+60]);
+  const root = d3.hierarchy(dummyRoot);
 
-  allRoots.forEach(rootData => {
-    const root = d3.hierarchy(rootData);
-    root.x0 = 0; root.y0 = 0;
+  if(!expandAll && root.children) root.children.forEach(collapse);
 
-    if(!expandAll && root.children) root.children.forEach(collapse);
-
-    const forestHeight = update(root, yOffset);
-    yOffset += forestHeight + VERTICAL_MARGIN;
-    totalHeight += forestHeight + VERTICAL_MARGIN;
-  });
-
-  // Adjust SVG height based on total tree height
-  svg.attr("height", totalHeight + 40);
-
+  // Collapse helper
   function collapse(d) {
-    if(d.children){ d._children = d.children; d._children.forEach(collapse); d.children=null; }
+    if(d.children){ d._children=d.children; d._children.forEach(collapse); d.children=null; }
   }
 
+  // Truncate text
   function truncateText(str, maxWidth, fontSize = 12) {
     const ellipsis = "...";
     const approxCharWidth = fontSize * 0.6;
@@ -109,84 +99,83 @@ function drawForest() {
     return str;
   }
 
-  function update(source, offsetY) {
-    tree(source);
+  // Compute tree layout
+  tree(root);
 
-    const link = g.selectAll(".link").data(source.links(), d=>d.target.data.name);
-    link.enter().append("path")
-      .attr("class","link")
-      .merge(link)
-      .attr("d", d => {
-        const startX = d.source.y + NODE_WIDTH/2;
-        const startY = d.source.x + offsetY;
-        const endX = d.target.y - NODE_WIDTH/2;
-        const endY = d.target.x + offsetY;
-        return `M${startX},${startY} C${(startX+endX)/2},${startY} ${(startX+endX)/2},${endY} ${endX},${endY}`;
-      });
-    link.exit().remove();
+  // Compute total height for SVG
+  const totalHeight = d3.max(root.descendants(), d => d.x) + NODE_HEIGHT;
+  svg.attr("height", totalHeight + 80);
 
-    const node = g.selectAll(".node").data(source.descendants(), d=>d.data.name);
-    const nodeEnter = node.enter().append("g")
-      .attr("class","node")
-      .attr("transform", d=>`translate(${source.y0},${source.x0 + offsetY})`)
-      .attr("title", d => `${d.data.name} - ${d.data.title}`)
-      .on("click", (event,d)=>{ 
-        if(d.children){ d._children=d.children; d.children=null;} 
-        else {d.children=d._children; d._children=null;} 
-        drawForest();
-      });
+  // Draw links
+  const link = g.selectAll(".link").data(root.links());
+  link.enter().append("path")
+    .attr("class","link")
+    .merge(link)
+    .attr("d", d => {
+      const startX = d.source.y + NODE_WIDTH/2;
+      const startY = d.source.x;
+      const endX = d.target.y - NODE_WIDTH/2;
+      const endY = d.target.x;
+      return `M${startX},${startY} C${(startX+endX)/2},${startY} ${(startX+endX)/2},${endY} ${endX},${endY}`;
+    });
+  link.exit().remove();
 
-    nodeEnter.append("rect")
-      .attr("width", NODE_WIDTH)
-      .attr("height", NODE_HEIGHT)
-      .attr("x",-NODE_WIDTH/2)
-      .attr("y",-NODE_HEIGHT/2)
-      .attr("fill","#fff")
-      .attr("stroke","steelblue")
-      .attr("stroke-width",2)
-      .attr("rx",6)
-      .attr("ry",6);
+  // Draw nodes
+  const node = g.selectAll(".node").data(root.descendants());
+  const nodeEnter = node.enter().append("g")
+    .attr("class","node")
+    .attr("transform", d=>`translate(${d.y},${d.x})`)
+    .attr("title", d => `${d.data.name}${d.data.title ? ' - '+d.data.title : ''}`)
+    .on("click", (event,d)=>{
+      if(d.children){ d._children=d.children; d.children=null;} 
+      else {d.children=d._children; d._children=null;} 
+      drawForest();
+    });
 
-    nodeEnter.filter(d => d.data.photo)
-      .append("image")
-      .attr("xlink:href", d => d.data.photo)
-      .attr("width", d => Math.min(MAX_PHOTO_SIZE, NODE_WIDTH*0.9))
-      .attr("height", d => Math.min(MAX_PHOTO_SIZE, NODE_HEIGHT*1.8))
-      .attr("x", d => -Math.min(MAX_PHOTO_SIZE, NODE_WIDTH*0.9)/2)
-      .attr("y", d => -NODE_HEIGHT/2 - Math.min(MAX_PHOTO_SIZE, NODE_HEIGHT*1.8) - 5)
-      .attr("clip-path","circle(50%)");
+  nodeEnter.append("rect")
+    .attr("width", NODE_WIDTH)
+    .attr("height", NODE_HEIGHT)
+    .attr("x",-NODE_WIDTH/2)
+    .attr("y",-NODE_HEIGHT/2)
+    .attr("fill","#fff")
+    .attr("stroke","steelblue")
+    .attr("stroke-width",2)
+    .attr("rx",6)
+    .attr("ry",6);
 
-    nodeEnter.append("text")
-      .attr("x",0).attr("y",-2)
-      .attr("text-anchor","middle")
-      .text(d => truncateText(d.data.name, NODE_WIDTH-10));
+  nodeEnter.filter(d => d.data.photo)
+    .append("image")
+    .attr("xlink:href", d => d.data.photo)
+    .attr("width", d => Math.min(MAX_PHOTO_SIZE, NODE_WIDTH*0.9))
+    .attr("height", d => Math.min(MAX_PHOTO_SIZE, NODE_HEIGHT*1.8))
+    .attr("x", d => -Math.min(MAX_PHOTO_SIZE, NODE_WIDTH*0.9)/2)
+    .attr("y", d => -NODE_HEIGHT/2 - Math.min(MAX_PHOTO_SIZE, NODE_HEIGHT*1.8) - 5)
+    .attr("clip-path","circle(50%)");
 
-    nodeEnter.append("text")
-      .attr("x",0).attr("y",14)
-      .attr("text-anchor","middle")
-      .attr("font-size","10px")
-      .attr("fill","#555")
-      .text(d => truncateText(d.data.title, NODE_WIDTH-10, 10));
+  nodeEnter.append("text")
+    .attr("x",0).attr("y",-2)
+    .attr("text-anchor","middle")
+    .text(d => truncateText(d.data.name, NODE_WIDTH-10));
 
-    const nodeUpdate = nodeEnter.merge(node);
-    nodeUpdate.transition().duration(300).attr("transform", d=>`translate(${d.y},${d.x + offsetY})`);
-    node.exit().remove();
+  nodeEnter.append("text")
+    .attr("x",0).attr("y",14)
+    .attr("text-anchor","middle")
+    .attr("font-size","10px")
+    .attr("fill","#555")
+    .text(d => truncateText(d.data.title, NODE_WIDTH-10, 10));
 
-    source.descendants().forEach(d=>{ d.x0=d.x; d.y0=d.y; });
-
-    // return height of this tree
-    return (d3.max(source.descendants(), d => d.x) || 0) + NODE_HEIGHT/2;
-  }
+  node.exit().remove();
 }
 
+// Toggle expand
 document.getElementById("toggleExpand").addEventListener("click", () => {
   expandAll = !expandAll;
   drawForest();
 });
 
+// Redraw on resize
 window.addEventListener("resize", () => {
-  if (allRoots.length === 0) return;
-  drawForest();
+  if(allRoots.length>0) drawForest();
 });
 </script>
 </body>
