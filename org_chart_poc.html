@@ -312,10 +312,10 @@ function drawForest() {
       .attr("class", `link link-${treeId}`)
       .merge(link)
       .attr("d", d => {
-        const startX = d.source.y + NODE_WIDTH/2;
-        const startY = d.source.x - minX + offsetY + NODE_HEIGHT/2;
-        const endX = d.target.y - NODE_WIDTH/2;
-        const endY = d.target.x - minX + offsetY + NODE_HEIGHT/2;
+        const startX = d.source.y + NODE_WIDTH/2;  // Right edge of parent node
+        const startY = d.source.x - minX + offsetY;  // Middle of parent node
+        const endX = d.target.y - NODE_WIDTH/2;    // Left edge of child node
+        const endY = d.target.x - minX + offsetY;    // Middle of child node
         return `M${startX},${startY} C${(startX+endX)/2},${startY} ${(startX+endX)/2},${endY} ${endX},${endY}`;
       });
     
