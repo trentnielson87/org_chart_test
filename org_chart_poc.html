@@ -12,6 +12,20 @@
   .link { fill: none; stroke: #ccc; stroke-width: 2px; }
   svg { width: 100%; overflow: visible; } /* removed height constraint */
   #controls { margin: 10px 20px; }
+  
+  /* Tooltip styles */
+  .tooltip {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    pointer-events: none;
+    z-index: 1000;
+    max-width: 300px;
+    word-wrap: break-word;
+  }
 </style>
 </head>
 <body>
@@ -32,33 +46,38 @@ const urls = [
 
 // Sample data as fallback
 const sampleData = [
-  { manager: null, employee: "CEO John Smith", title: "Chief Executive Officer", photo: "" },
-  { manager: "CEO John Smith", employee: "VP Marketing", title: "Vice President of Marketing", photo: "" },
-  { manager: "CEO John Smith", employee: "VP Engineering", title: "Vice President of Engineering", photo: "" },
-  { manager: "CEO John Smith", employee: "VP Sales", title: "Vice President of Sales", photo: "" },
-  { manager: "VP Marketing", employee: "Marketing Manager A", title: "Marketing Manager", photo: "" },
-  { manager: "VP Marketing", employee: "Marketing Manager B", title: "Marketing Manager", photo: "" },
-  { manager: "VP Engineering", employee: "Senior Developer 1", title: "Senior Software Developer", photo: "" },
-  { manager: "VP Engineering", employee: "Senior Developer 2", title: "Senior Software Developer", photo: "" },
-  { manager: "VP Engineering", employee: "QA Lead", title: "Quality Assurance Lead", photo: "" },
-  { manager: "VP Sales", employee: "Sales Rep 1", title: "Sales Representative", photo: "" },
-  { manager: "VP Sales", employee: "Sales Rep 2", title: "Sales Representative", photo: "" },
-  { manager: "Senior Developer 1", employee: "Junior Dev A", title: "Junior Developer", photo: "" },
-  { manager: "Senior Developer 1", employee: "Junior Dev B", title: "Junior Developer", photo: "" },
-  { manager: "QA Lead", employee: "QA Tester 1", title: "QA Tester", photo: "" },
-  { manager: "QA Lead", employee: "QA Tester 2", title: "QA Tester", photo: "" },
+  { manager: null, employee: "CEO John Smith", title: "Chief Executive Officer", photo: "", linkUrl: "https://example.com/ceo" },
+  { manager: "CEO John Smith", employee: "VP Marketing", title: "Vice President of Marketing", photo: "", linkUrl: "https://example.com/vp-marketing" },
+  { manager: "CEO John Smith", employee: "VP Engineering", title: "Vice President of Engineering", photo: "", linkUrl: "https://example.com/vp-engineering" },
+  { manager: "CEO John Smith", employee: "VP Sales", title: "Vice President of Sales", photo: "", linkUrl: "https://example.com/vp-sales" },
+  { manager: "VP Marketing", employee: "Marketing Manager A", title: "Marketing Manager", photo: "", linkUrl: "https://example.com/marketing-mgr-a" },
+  { manager: "VP Marketing", employee: "Marketing Manager B", title: "Marketing Manager", photo: "", linkUrl: "https://example.com/marketing-mgr-b" },
+  { manager: "VP Engineering", employee: "Senior Developer 1", title: "Senior Software Developer", photo: "", linkUrl: "https://example.com/dev-1" },
+  { manager: "VP Engineering", employee: "Senior Developer 2", title: "Senior Software Developer", photo: "", linkUrl: "https://example.com/dev-2" },
+  { manager: "VP Engineering", employee: "QA Lead", title: "Quality Assurance Lead", photo: "", linkUrl: "https://example.com/qa-lead" },
+  { manager: "VP Sales", employee: "Sales Rep 1", title: "Sales Representative", photo: "", linkUrl: "https://example.com/sales-1" },
+  { manager: "VP Sales", employee: "Sales Rep 2", title: "Sales Representative", photo: "", linkUrl: "https://example.com/sales-2" },
+  { manager: "Senior Developer 1", employee: "Junior Dev A", title: "Junior Developer", photo: "", linkUrl: "https://example.com/junior-dev-a" },
+  { manager: "Senior Developer 1", employee: "Junior Dev B", title: "Junior Developer", photo: "", linkUrl: "https://example.com/junior-dev-b" },
+  { manager: "QA Lead", employee: "QA Tester 1", title: "QA Tester", photo: "", linkUrl: "https://example.com/qa-tester-1" },
+  { manager: "QA Lead", employee: "QA Tester 2", title: "QA Tester", photo: "", linkUrl: "https://example.com/qa-tester-2" },
   // Disconnected tree
-  { manager: null, employee: "Regional Manager", title: "Regional Manager", photo: "" },
-  { manager: "Regional Manager", employee: "District Manager A", title: "District Manager", photo: "" },
-  { manager: "Regional Manager", employee: "District Manager B", title: "District Manager", photo: "" },
-  { manager: "District Manager A", employee: "Store Manager 1", title: "Store Manager", photo: "" },
-  { manager: "District Manager A", employee: "Store Manager 2", title: "Store Manager", photo: "" }
+  { manager: null, employee: "Regional Manager", title: "Regional Manager", photo: "", linkUrl: "https://example.com/regional-mgr" },
+  { manager: "Regional Manager", employee: "District Manager A", title: "District Manager", photo: "", linkUrl: "https://example.com/district-mgr-a" },
+  { manager: "Regional Manager", employee: "District Manager B", title: "District Manager", photo: "", linkUrl: "https://example.com/district-mgr-b" },
+  { manager: "District Manager A", employee: "Store Manager 1", title: "Store Manager", photo: "", linkUrl: "https://example.com/store-mgr-1" },
+  { manager: "District Manager A", employee: "Store Manager 2", title: "Store Manager", photo: "", linkUrl: "https://example.com/store-mgr-2" }
 ];
 
 let allRoots = [];
 let expandAll = false;
 const svg = d3.select("svg");
 const g = svg.append("g").attr("transform", "translate(80,60)");
+
+// Create tooltip element
+const tooltip = d3.select("body").append("div")
+  .attr("class", "tooltip")
+  .style("opacity", 0);
 
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 60;
@@ -131,8 +150,11 @@ function fetchAndRender() {
           manager: r.c[0]?.v?.toString().trim() || null,
           employee: r.c[1]?.v?.toString().trim() || null,
           title: r.c[2]?.v?.toString().trim() || "",
-          photo: r.c[3]?.v?.toString().trim() || ""
+          photo: r.c[3]?.v?.toString().trim() || "",
+          linkUrl: r.c[4]?.v?.toString().trim() || ""
         })).filter(item => item.employee); // Filter out rows without employees
+        
+        console.log("Sample of parsed data with photos:", data.slice(0, 3));
         
         console.log("Processed data:", data);
       } else if (currentUrl.includes('export?format=csv')) {
@@ -147,7 +169,8 @@ function fetchAndRender() {
               manager: values[0] || null,
               employee: values[1] || null,
               title: values[2] || "",
-              photo: values[3] || ""
+              photo: values[3] || "",
+              linkUrl: values[4] || ""
             };
           });
       } else {
@@ -158,7 +181,8 @@ function fetchAndRender() {
           manager: r[0]?.toString().trim() ?? null,
           employee: r[1]?.toString().trim() ?? null,
           title: r[2]?.toString().trim() ?? "",
-          photo: r[3]?.toString().trim() ?? ""
+          photo: r[3]?.toString().trim() ?? "",
+          linkUrl: r[4]?.toString().trim() ?? ""
         }));
       }
 
@@ -183,7 +207,7 @@ function fetchAndRender() {
       <ul style="margin: 5px 0; padding-left: 20px;">
         <li>Published to the web (File → Share → Publish to web)</li>
         <li>Set to "Anyone with the link can view"</li>
-        <li>Has columns: Manager | Employee | Title | Photo</li>
+        <li>Has columns: Manager | Employee | Title | Photo | Link URL</li>
       </ul>
     `;
     const existingInfo = document.querySelector('.fallback-info');
@@ -203,12 +227,12 @@ function buildForest(pairs) {
   const childrenSet = new Set();
 
   // First pass: create all nodes
-  pairs.forEach(({manager, employee, title, photo}) => {
+  pairs.forEach(({manager, employee, title, photo, linkUrl}) => {
     if(manager && !nodes[manager]) {
-      nodes[manager] = { name: manager, title: "", photo: "", children: [] };
+      nodes[manager] = { name: manager, title: "", photo: "", linkUrl: "", children: [] };
     }
     if(employee && !nodes[employee]) {
-      nodes[employee] = { name: employee, title: title || "", photo: photo || "", children: [] };
+      nodes[employee] = { name: employee, title: title || "", photo: photo || "", linkUrl: linkUrl || "", children: [] };
     }
     // Track employees (nodes that have managers)
     if(employee && manager) {
@@ -329,8 +353,17 @@ function drawForest() {
     const nodeEnter = node.enter().append("g")
       .attr("class", `node node-${treeId}`)
       .attr("transform", d => `translate(${d.y},${d.x - minX + offsetY})`)
-      .style("cursor", "pointer")
-      .on("click", (event, d) => { 
+      .style("cursor", d => d.data.linkUrl ? "pointer" : "default")
+      .on("click", (event, d) => {
+        // Handle hyperlink clicks - check if it's a link click vs expand/collapse
+        if (d.data.linkUrl && !event.target.classList.contains('expand-indicator')) {
+          // If there's a link URL and we're not clicking the expand button
+          console.log("Opening link:", d.data.linkUrl);
+          window.open(d.data.linkUrl, '_blank');
+          return;
+        }
+        
+        // Otherwise handle expand/collapse
         console.log("Clicked node:", d.data.name, "has children:", !!d.children, "has _children:", !!d._children);
         
         // Toggle children visibility
@@ -348,6 +381,35 @@ function drawForest() {
         
         // Redraw only this specific tree instead of entire forest for better performance
         update(source, offsetY, minX);
+      })
+      .on("mouseover", (event, d) => {
+        // Show tooltip with full title if it's truncated, and show link if available
+        const fullTitle = d.data.title;
+        const truncatedTitle = truncateText(d.data.title, NODE_WIDTH - 10, 10);
+        
+        let tooltipContent = `<strong>${d.data.name}</strong>`;
+        
+        if (fullTitle !== truncatedTitle && fullTitle.length > 0) {
+          tooltipContent += `<br/>${fullTitle}`;
+        }
+        
+        if (d.data.linkUrl) {
+          tooltipContent += `<br/><small style="color: #ccc;">Click to open link</small>`;
+        }
+        
+        if ((fullTitle !== truncatedTitle && fullTitle.length > 0) || d.data.linkUrl) {
+          tooltip.transition()
+            .duration(200)
+            .style("opacity", .9);
+          tooltip.html(tooltipContent)
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 10) + "px");
+        }
+      })
+      .on("mouseout", (event, d) => {
+        tooltip.transition()
+          .duration(500)
+          .style("opacity", 0);
       });
 
     nodeEnter.append("rect")
@@ -367,7 +429,14 @@ function drawForest() {
       .attr("text-anchor", "middle")
       .text(d => truncateText(d.data.name, NODE_WIDTH - 10));
 
-    // Add visual indicators for expandable/collapsible nodes
+    nodeEnter.append("text")
+      .attr("class", "node-title")
+      .attr("x", 0)
+      .attr("y", 16)
+      .attr("text-anchor", "middle")
+      .attr("font-size", "10px")
+      .attr("fill", "#555")
+      .text(d => truncateText(d.data.title, NODE_WIDTH - 10, 10));
     nodeEnter.filter(d => d.children || d._children)
       .append("circle")
       .attr("r", 8)
