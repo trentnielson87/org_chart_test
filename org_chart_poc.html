@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <title>Collapsible Org Chart with Tooltips & Disconnected Nodes</title>
-<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <style>
-  body { font-family: Arial, sans-serif; margin:0; padding:0; }
+  body { font-family: Arial, sans-serif; margin:0; padding:0; overflow-x: auto; }
   .node rect { fill: #fff; stroke: steelblue; stroke-width: 2px; rx: 6px; ry: 6px; }
   .node text { font: 12px sans-serif; pointer-events: none; }
   .node image { pointer-events: none; }
   .link { fill: none; stroke: #ccc; stroke-width: 2px; }
-  svg { width: 100%; height: 100vh; overflow: visible; } /* full viewport height */
+  svg { width: 100%; overflow: visible; } /* removed height constraint */
   #controls { margin: 10px 20px; }
 </style>
 </head>
@@ -23,74 +23,268 @@
 
 <script>
 const sheetId = "1xZAsHK_U8BajMe2d2pMEkSvQnrV2t7Ds08v_YeKgVAQ";
-const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json`;
+// Try multiple approaches to access the Google Sheet
+const urls = [
+  `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&headers=1`,
+  `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`,
+  `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/A:D?key=AIzaSyD-9tSrke72PouQMnMX-a7EAHI46oO1wI0`
+];
+
+// Sample data as fallback
+const sampleData = [
+  { manager: null, employee: "CEO John Smith", title: "Chief Executive Officer", photo: "" },
+  { manager: "CEO John Smith", employee: "VP Marketing", title: "Vice President of Marketing", photo: "" },
+  { manager: "CEO John Smith", employee: "VP Engineering", title: "Vice President of Engineering", photo: "" },
+  { manager: "CEO John Smith", employee: "VP Sales", title: "Vice President of Sales", photo: "" },
+  { manager: "VP Marketing", employee: "Marketing Manager A", title: "Marketing Manager", photo: "" },
+  { manager: "VP Marketing", employee: "Marketing Manager B", title: "Marketing Manager", photo: "" },
+  { manager: "VP Engineering", employee: "Senior Developer 1", title: "Senior Software Developer", photo: "" },
+  { manager: "VP Engineering", employee: "Senior Developer 2", title: "Senior Software Developer", photo: "" },
+  { manager: "VP Engineering", employee: "QA Lead", title: "Quality Assurance Lead", photo: "" },
+  { manager: "VP Sales", employee: "Sales Rep 1", title: "Sales Representative", photo: "" },
+  { manager: "VP Sales", employee: "Sales Rep 2", title: "Sales Representative", photo: "" },
+  { manager: "Senior Developer 1", employee: "Junior Dev A", title: "Junior Developer", photo: "" },
+  { manager: "Senior Developer 1", employee: "Junior Dev B", title: "Junior Developer", photo: "" },
+  { manager: "QA Lead", employee: "QA Tester 1", title: "QA Tester", photo: "" },
+  { manager: "QA Lead", employee: "QA Tester 2", title: "QA Tester", photo: "" },
+  // Disconnected tree
+  { manager: null, employee: "Regional Manager", title: "Regional Manager", photo: "" },
+  { manager: "Regional Manager", employee: "District Manager A", title: "District Manager", photo: "" },
+  { manager: "Regional Manager", employee: "District Manager B", title: "District Manager", photo: "" },
+  { manager: "District Manager A", employee: "Store Manager 1", title: "Store Manager", photo: "" },
+  { manager: "District Manager A", employee: "Store Manager 2", title: "Store Manager", photo: "" }
+];
 
 let allRoots = [];
 let expandAll = false;
 const svg = d3.select("svg");
 const g = svg.append("g").attr("transform", "translate(80,60)");
 
-const NODE_WIDTH = 160;       // slightly wider for readability
-const NODE_HEIGHT = 60;       // slightly taller
-const VERTICAL_MARGIN = 140;  // more space between root trees
+const NODE_WIDTH = 160;
+const NODE_HEIGHT = 60;
+const VERTICAL_MARGIN = 80;        // Reduced from 140 - space between separate org trees
 const MAX_PHOTO_SIZE = 60;
+const HORIZONTAL_SPACING = 180;    // Increased from 140 to prevent horizontal overlap
+const VERTICAL_SPACING = 80;       // Keep reduced - vertical space between parent/child
 
-// Fetch data
-fetch(url)
-  .then(res => res.text())
-  .then(text => {
-    const json = JSON.parse(text.substring(text.indexOf("{"), text.lastIndexOf("}") + 1));
-    const rows = json.table.rows;
+// Wait for D3 to load, then fetch data
+window.addEventListener('load', () => {
+  if (typeof d3 === 'undefined') {
+    console.error('D3.js failed to load');
+    document.body.innerHTML = '<h2>Error: D3.js library failed to load. Please check your internet connection.</h2>';
+    return;
+  }
+  
+  fetchAndRender();
+});
 
-    const data = rows.slice(1).map(r => ({
-      manager: r.c[0]?.v?.toString().trim() ?? null,
-      employee: r.c[1]?.v?.toString().trim() ?? null,
-      title: r.c[2]?.v?.toString().trim() ?? "",
-      photo: r.c[3]?.v?.toString().trim() ?? ""
-    }));
+function fetchAndRender() {
+  console.log("Attempting to fetch Google Sheets data...");
+  
+  // Function to try fetching from different URL approaches
+  async function tryFetch(urlIndex = 0) {
+    if (urlIndex >= urls.length) {
+      console.log("All fetch attempts failed, using sample data");
+      buildForest(sampleData);
+      drawForest();
+      showFallbackMessage();
+      return;
+    }
 
-    buildForest(data);
-    drawForest();
-  })
-  .catch(err => console.error(err));
+    const currentUrl = urls[urlIndex];
+    console.log(`Trying URL ${urlIndex + 1}:`, currentUrl);
+
+    try {
+      const response = await fetch(currentUrl);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const text = await response.text();
+      console.log("Fetch successful, processing data...");
+
+      let data;
+      
+      if (currentUrl.includes('gviz/tq')) {
+        // Handle Google Visualization API JSON response (JSONP format)
+        let jsonText = text;
+        
+        // Remove JSONP wrapper if present
+        if (text.includes('google.visualization.Query.setResponse(')) {
+          const start = text.indexOf('(') + 1;
+          const end = text.lastIndexOf(')');
+          jsonText = text.substring(start, end);
+        }
+        
+        const json = JSON.parse(jsonText);
+        console.log("Parsed JSON structure:", json);
+        
+        if (json.status !== "ok") {
+          throw new Error(`Google Sheets API error: ${json.status}`);
+        }
+        
+        const rows = json.table.rows;
+        console.log("Raw rows from sheet:", rows);
+        
+        data = rows.map(r => ({
+          manager: r.c[0]?.v?.toString().trim() || null,
+          employee: r.c[1]?.v?.toString().trim() || null,
+          title: r.c[2]?.v?.toString().trim() || "",
+          photo: r.c[3]?.v?.toString().trim() || ""
+        })).filter(item => item.employee); // Filter out rows without employees
+        
+        console.log("Processed data:", data);
+      } else if (currentUrl.includes('export?format=csv')) {
+        // Handle CSV response
+        const lines = text.split('\n');
+        const headers = lines[0].split(',');
+        data = lines.slice(1)
+          .filter(line => line.trim())
+          .map(line => {
+            const values = line.split(',').map(v => v.replace(/"/g, '').trim());
+            return {
+              manager: values[0] || null,
+              employee: values[1] || null,
+              title: values[2] || "",
+              photo: values[3] || ""
+            };
+          });
+      } else {
+        // Handle Google Sheets API JSON response
+        const json = JSON.parse(text);
+        const rows = json.values;
+        data = rows.slice(1).map(r => ({
+          manager: r[0]?.toString().trim() ?? null,
+          employee: r[1]?.toString().trim() ?? null,
+          title: r[2]?.toString().trim() ?? "",
+          photo: r[3]?.toString().trim() ?? ""
+        }));
+      }
+
+      console.log("Successfully parsed data:", data);
+      buildForest(data);
+      drawForest();
+      return;
+
+    } catch (error) {
+      console.error(`URL ${urlIndex + 1} failed:`, error);
+      // Try next URL
+      await tryFetch(urlIndex + 1);
+    }
+  }
+
+  function showFallbackMessage() {
+    const infoDiv = document.createElement('div');
+    infoDiv.style.cssText = 'background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 10px; margin: 10px 20px; border-radius: 4px;';
+    infoDiv.innerHTML = `
+      <strong>Note:</strong> Could not access Google Sheets data. Using sample data instead.<br>
+      <small>To use your Google Sheet data, ensure the sheet is:</small>
+      <ul style="margin: 5px 0; padding-left: 20px;">
+        <li>Published to the web (File → Share → Publish to web)</li>
+        <li>Set to "Anyone with the link can view"</li>
+        <li>Has columns: Manager | Employee | Title | Photo</li>
+      </ul>
+    `;
+    const existingInfo = document.querySelector('.fallback-info');
+    if (!existingInfo) {
+      infoDiv.className = 'fallback-info';
+      document.querySelector('#controls').parentNode.insertBefore(infoDiv, document.querySelector('h2'));
+    }
+  }
+
+  // Start the fetch attempt chain
+  tryFetch();
+}
 
 function buildForest(pairs) {
+  console.log("Building forest with data:", pairs);
   const nodes = {};
   const childrenSet = new Set();
 
+  // First pass: create all nodes
   pairs.forEach(({manager, employee, title, photo}) => {
-    if(manager && !nodes[manager]) nodes[manager] = { name: manager, title:"", photo:"", children: [] };
-    if(employee && !nodes[employee]) nodes[employee] = { name: employee, title, photo, children: [] };
-    childrenSet.add(employee);
+    if(manager && !nodes[manager]) {
+      nodes[manager] = { name: manager, title: "", photo: "", children: [] };
+    }
+    if(employee && !nodes[employee]) {
+      nodes[employee] = { name: employee, title: title || "", photo: photo || "", children: [] };
+    }
+    // Track employees (nodes that have managers)
+    if(employee && manager) {
+      childrenSet.add(employee);
+    }
   });
 
+  // Second pass: build relationships
   pairs.forEach(({manager, employee}) => {
-    if(manager && employee) nodes[manager].children.push(nodes[employee]);
+    if(manager && employee && nodes[manager] && nodes[employee]) {
+      nodes[manager].children.push(nodes[employee]);
+    }
   });
 
+  // Find root nodes (nodes that are not children of anyone)
   allRoots = Object.values(nodes).filter(n => !childrenSet.has(n.name));
+  
+  console.log("All nodes:", Object.keys(nodes));
+  console.log("Children set:", Array.from(childrenSet));
+  console.log("Found roots:", allRoots.map(r => r.name));
+  console.log("Total nodes:", Object.keys(nodes).length);
 }
 
 function drawForest() {
+  console.log("Drawing forest with", allRoots.length, "root nodes");
+  
+  if (allRoots.length === 0) {
+    console.error("No root nodes found!");
+    return;
+  }
+  
   g.selectAll("*").remove();
-  const [treeHeight, treeWidth] = [window.innerHeight - NODE_HEIGHT - VERTICAL_MARGIN, window.innerWidth - NODE_WIDTH - 40];
+  
+  // Use nodeSize instead of size to allow unlimited expansion
+  const tree = d3.tree().nodeSize([VERTICAL_SPACING, HORIZONTAL_SPACING]);
 
-  // Increased vertical spacing between nodes
-  const tree = d3.tree().nodeSize([NODE_HEIGHT + 100, NODE_WIDTH + 60]).size([treeHeight, treeWidth]);
-
-  let yOffset = 0;
-  allRoots.forEach(rootData => {
+  let currentY = 0;
+  
+  allRoots.forEach((rootData, index) => {
+    console.log(`Processing root ${index}:`, rootData.name);
+    
     const root = d3.hierarchy(rootData);
     root.x0 = 0; root.y0 = 0;
 
     if(!expandAll && root.children) root.children.forEach(collapse);
 
-    update(root, yOffset);
-    yOffset += (root.height + 1) * (NODE_HEIGHT + 100) + VERTICAL_MARGIN;
+    // Apply tree layout
+    tree(root);
+    
+    // Calculate this tree's height
+    let minX = Infinity, maxX = -Infinity;
+    root.descendants().forEach(d => {
+      minX = Math.min(minX, d.x);
+      maxX = Math.max(maxX, d.x);
+    });
+    
+    const treeHeight = maxX - minX + NODE_HEIGHT + VERTICAL_SPACING;
+    
+    // Update the tree with current offset
+    update(root, currentY, minX);
+    
+    // Move to next position
+    currentY += treeHeight + VERTICAL_MARGIN;
   });
 
+  // Set SVG height to accommodate all content with padding
+  const totalHeight = Math.max(currentY, 600);
+  svg.attr("height", totalHeight);
+  console.log("Set SVG height to:", totalHeight);
+
   function collapse(d) {
-    if(d.children){ d._children = d.children; d._children.forEach(collapse); d.children=null; }
+    if(d.children) { 
+      d._children = d.children; 
+      d._children.forEach(collapse); 
+      d.children = null; 
+    }
   }
 
   function truncateText(str, maxWidth, fontSize = 12) {
@@ -101,70 +295,149 @@ function drawForest() {
     return str;
   }
 
-  function update(source, offsetY) {
+  function update(source, offsetY, minX) {
+    console.log("Updating tree with offsetY:", offsetY, "minX:", minX);
+    
     tree(source);
 
-    const link = g.selectAll(".link").data(source.links(), d=>d.target.data.name);
+    // Create unique class names for this tree to avoid conflicts
+    const treeId = source.data.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '');
+
+    const links = source.links();
+    console.log("Drawing", links.length, "links");
+    
+    const link = g.selectAll(`.link-${treeId}`).data(links, d => d.target.data.name);
+    
     link.enter().append("path")
-      .attr("class","link")
+      .attr("class", `link link-${treeId}`)
       .merge(link)
       .attr("d", d => {
         const startX = d.source.y + NODE_WIDTH/2;
-        const startY = d.source.x + offsetY;
+        const startY = d.source.x - minX + offsetY + NODE_HEIGHT/2;
         const endX = d.target.y - NODE_WIDTH/2;
-        const endY = d.target.x + offsetY;
+        const endY = d.target.x - minX + offsetY + NODE_HEIGHT/2;
         return `M${startX},${startY} C${(startX+endX)/2},${startY} ${(startX+endX)/2},${endY} ${endX},${endY}`;
       });
+    
     link.exit().remove();
 
-    const node = g.selectAll(".node").data(source.descendants(), d=>d.data.name);
+    const nodes = source.descendants();
+    console.log("Drawing", nodes.length, "nodes");
+
+    const node = g.selectAll(`.node-${treeId}`).data(nodes, d => d.data.name);
+    
     const nodeEnter = node.enter().append("g")
-      .attr("class","node")
-      .attr("transform", d=>`translate(${source.y0},${source.x0 + offsetY})`)
-      .attr("title", d => `${d.data.name} - ${d.data.title}`)
-      .on("click", (event,d)=>{ 
-        if(d.children){ d._children=d.children; d.children=null;} 
-        else {d.children=d._children; d._children=null;} 
-        update(source, offsetY);
+      .attr("class", `node node-${treeId}`)
+      .attr("transform", d => `translate(${d.y},${d.x - minX + offsetY})`)
+      .style("cursor", "pointer")
+      .on("click", (event, d) => { 
+        console.log("Clicked node:", d.data.name, "has children:", !!d.children, "has _children:", !!d._children);
+        
+        // Toggle children visibility
+        if(d.children) { 
+          // Currently expanded - collapse it
+          d._children = d.children; 
+          d.children = null;
+          console.log("Collapsing node:", d.data.name);
+        } else if(d._children) { 
+          // Currently collapsed - expand it
+          d.children = d._children; 
+          d._children = null;
+          console.log("Expanding node:", d.data.name);
+        }
+        
+        // Redraw only this specific tree instead of entire forest for better performance
+        update(source, offsetY, minX);
       });
 
     nodeEnter.append("rect")
       .attr("width", NODE_WIDTH)
       .attr("height", NODE_HEIGHT)
-      .attr("x",-NODE_WIDTH/2)
-      .attr("y",-NODE_HEIGHT/2)
-      .attr("fill","#fff")
-      .attr("stroke","steelblue")
-      .attr("stroke-width",2)
-      .attr("rx",6)
-      .attr("ry",6);
-
-    nodeEnter.filter(d => d.data.photo)
-      .append("image")
-      .attr("xlink:href", d => d.data.photo)
-      .attr("width", d => Math.min(MAX_PHOTO_SIZE, NODE_WIDTH*0.9))
-      .attr("height", d => Math.min(MAX_PHOTO_SIZE, NODE_HEIGHT*1.8))
-      .attr("x", d => -Math.min(MAX_PHOTO_SIZE, NODE_WIDTH*0.9)/2)
-      .attr("y", d => -NODE_HEIGHT/2 - Math.min(MAX_PHOTO_SIZE, NODE_HEIGHT*1.8) - 5)
-      .attr("clip-path","circle(50%)");
+      .attr("x", -NODE_WIDTH/2)
+      .attr("y", -NODE_HEIGHT/2)
+      .attr("fill", "#fff")
+      .attr("stroke", "steelblue")
+      .attr("stroke-width", 2)
+      .attr("rx", 6)
+      .attr("ry", 6);
 
     nodeEnter.append("text")
-      .attr("x",0).attr("y",-2)
-      .attr("text-anchor","middle")
-      .text(d => truncateText(d.data.name, NODE_WIDTH-10));
+      .attr("x", 0)
+      .attr("y", -2)
+      .attr("text-anchor", "middle")
+      .text(d => truncateText(d.data.name, NODE_WIDTH - 10));
+
+    // Add visual indicators for expandable/collapsible nodes
+    nodeEnter.filter(d => d.children || d._children)
+      .append("circle")
+      .attr("r", 8)
+      .attr("cx", NODE_WIDTH/2 - 12)
+      .attr("cy", -NODE_HEIGHT/2 + 12)
+      .attr("fill", d => d.children ? "#ff6b6b" : "#4ecdc4")
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 2)
+      .style("cursor", "pointer");
+
+    nodeEnter.filter(d => d.children || d._children)
+      .append("text")
+      .attr("class", "expand-indicator")
+      .attr("x", NODE_WIDTH/2 - 12)
+      .attr("y", -NODE_HEIGHT/2 + 16)
+      .attr("text-anchor", "middle")
+      .attr("font-size", "12px")
+      .attr("font-weight", "bold")
+      .attr("fill", "#fff")
+      .attr("pointer-events", "none")
+      .text(d => d.children ? "−" : "+");
 
     nodeEnter.append("text")
-      .attr("x",0).attr("y",16)
-      .attr("text-anchor","middle")
-      .attr("font-size","10px")
-      .attr("fill","#555")
-      .text(d => truncateText(d.data.title, NODE_WIDTH-10, 10));
+      .attr("x", 0)
+      .attr("y", 16)
+      .attr("text-anchor", "middle")
+      .attr("font-size", "10px")
+      .attr("fill", "#555")
+      .text(d => truncateText(d.data.title, NODE_WIDTH - 10, 10));
 
+    // Add visual indicators for expandable/collapsible nodes
+    nodeEnter.filter(d => d.children || d._children)
+      .append("circle")
+      .attr("r", 8)
+      .attr("cx", NODE_WIDTH/2 - 12)
+      .attr("cy", -NODE_HEIGHT/2 + 12)
+      .attr("fill", d => d.children ? "#ff6b6b" : "#4ecdc4")
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 2)
+      .style("cursor", "pointer");
+
+    nodeEnter.filter(d => d.children || d._children)
+      .append("text")
+      .attr("x", NODE_WIDTH/2 - 12)
+      .attr("y", -NODE_HEIGHT/2 + 16)
+      .attr("text-anchor", "middle")
+      .attr("font-size", "12px")
+      .attr("font-weight", "bold")
+      .attr("fill", "#fff")
+      .attr("pointer-events", "none")
+      .text(d => d.children ? "−" : "+");
+
+    // Update existing nodes to reflect current state
     const nodeUpdate = nodeEnter.merge(node);
-    nodeUpdate.transition().duration(300).attr("transform", d=>`translate(${d.y},${d.x + offsetY})`);
+    
+    // Update circle colors for expandable nodes
+    nodeUpdate.select("circle")
+      .attr("fill", d => d.children ? "#ff6b6b" : "#4ecdc4");
+    
+    // Update expand indicator text - only for nodes that actually have the indicator
+    nodeUpdate.filter(d => d.children || d._children)
+      .select(".expand-indicator")
+      .text(d => d.children ? "−" : "+");
+
+    nodeUpdate.transition().duration(300)
+      .attr("transform", d => `translate(${d.y},${d.x - minX + offsetY})`);
+    
     node.exit().remove();
 
-    source.descendants().forEach(d=>{ d.x0=d.x; d.y0=d.y; });
+    source.descendants().forEach(d => { d.x0 = d.x; d.y0 = d.y; });
   }
 }
 
