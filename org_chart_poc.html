@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Collapsible Org Chart with Tooltips & Disconnected Nodes</title>
+<title>Collapsible Org Chart - Fit Width, Scroll Height</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
   body { font-family: Arial, sans-serif; margin:0; padding:0; }
@@ -10,7 +10,7 @@
   .node text { font: 12px sans-serif; pointer-events: none; }
   .node image { pointer-events: none; }
   .link { fill: none; stroke: #ccc; stroke-width: 2px; }
-  svg { width: 100%; height: 90vh; overflow: visible; }
+  svg { width: 100%; overflow: visible; display: block; }
   #controls { margin: 10px 20px; }
 </style>
 </head>
@@ -18,7 +18,7 @@
 <div id="controls">
   <button id="toggleExpand">Toggle Expand All</button>
 </div>
-<h2 style="margin-left:20px;">Collapsible Org Chart with Tooltips & Disconnected Nodes</h2>
+<h2 style="margin-left:20px;">Collapsible Org Chart - Fit Width, Scroll Height</h2>
 <svg></svg>
 
 <script>
@@ -27,15 +27,14 @@ const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:j
 
 let allRoots = [];
 let expandAll = false;
-const svg = d3.select("svg");
-const g = svg.append("g").attr("transform", "translate(80,40)");
-
 const NODE_WIDTH = 140;
 const NODE_HEIGHT = 50;
 const VERTICAL_MARGIN = 80;
 const MAX_PHOTO_SIZE = 60;
 
-// Fetch data
+const svg = d3.select("svg");
+const g = svg.append("g").attr("transform", "translate(80,40)");
+
 fetch(url)
   .then(res => res.text())
   .then(text => {
@@ -58,37 +57,45 @@ function buildForest(pairs) {
   const nodes = {};
   const childrenSet = new Set();
 
-  // create nodes for all managers and employees
+  // Create nodes for all managers and employees
   pairs.forEach(({manager, employee, title, photo}) => {
     if(manager && !nodes[manager]) nodes[manager] = { name: manager, title:"", photo:"", children: [] };
     if(employee && !nodes[employee]) nodes[employee] = { name: employee, title, photo, children: [] };
     childrenSet.add(employee);
   });
 
-  // assign children
+  // Assign children
   pairs.forEach(({manager, employee}) => {
     if(manager && employee) nodes[manager].children.push(nodes[employee]);
   });
 
-  // roots = nodes that are never children
+  // Roots = nodes that are never children
   allRoots = Object.values(nodes).filter(n => !childrenSet.has(n.name));
 }
 
 function drawForest() {
   g.selectAll("*").remove();
-  const [treeHeight, treeWidth] = [window.innerHeight - NODE_HEIGHT - VERTICAL_MARGIN, window.innerWidth - NODE_WIDTH - 40];
-  const tree = d3.tree().nodeSize([NODE_HEIGHT + 60, NODE_WIDTH + 60]).size([treeHeight, treeWidth]);
+
+  // Only constrain width, not height
+  const treeWidth = window.innerWidth - NODE_WIDTH - 40;
+  const tree = d3.tree().nodeSize([NODE_HEIGHT + 60, NODE_WIDTH + 60]);
 
   let yOffset = 0;
+  let totalHeight = 0;
+
   allRoots.forEach(rootData => {
     const root = d3.hierarchy(rootData);
     root.x0 = 0; root.y0 = 0;
 
     if(!expandAll && root.children) root.children.forEach(collapse);
 
-    update(root, yOffset);
-    yOffset += (root.height + 1) * (NODE_HEIGHT + 60) + VERTICAL_MARGIN;
+    const forestHeight = update(root, yOffset);
+    yOffset += forestHeight + VERTICAL_MARGIN;
+    totalHeight += forestHeight + VERTICAL_MARGIN;
   });
+
+  // Adjust SVG height based on total tree height
+  svg.attr("height", totalHeight + 40);
 
   function collapse(d) {
     if(d.children){ d._children = d.children; d._children.forEach(collapse); d.children=null; }
@@ -122,11 +129,11 @@ function drawForest() {
     const nodeEnter = node.enter().append("g")
       .attr("class","node")
       .attr("transform", d=>`translate(${source.y0},${source.x0 + offsetY})`)
-      .attr("title", d => `${d.data.name} - ${d.data.title}`) // tooltip on group
+      .attr("title", d => `${d.data.name} - ${d.data.title}`)
       .on("click", (event,d)=>{ 
         if(d.children){ d._children=d.children; d.children=null;} 
         else {d.children=d._children; d._children=null;} 
-        update(source, offsetY);
+        drawForest();
       });
 
     nodeEnter.append("rect")
@@ -166,6 +173,9 @@ function drawForest() {
     node.exit().remove();
 
     source.descendants().forEach(d=>{ d.x0=d.x; d.y0=d.y; });
+
+    // return height of this tree
+    return (d3.max(source.descendants(), d => d.x) || 0) + NODE_HEIGHT/2;
   }
 }
 
