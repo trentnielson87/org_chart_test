@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>PP9 Ministering Chart</title>
+<title>PP9 Ministering</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <style>
   body { font-family: Arial, sans-serif; margin:0; padding:0; overflow-x: auto; }
@@ -43,7 +43,7 @@
 <div id="controls">
   <button id="toggleExpand">Toggle Expand All</button>
 </div>
-<h2 style="margin-left:20px;">PP9 Ministering Chart</h2>
+<h2 style="margin-left:20px;">PP9 Ministering</h2>
 <svg></svg>
 
 <script>
@@ -94,11 +94,13 @@ const NODE_HEIGHT = 60;
 const VERTICAL_MARGIN = 80;
 const MAX_PHOTO_SIZE = 60;
 const HORIZONTAL_SPACING = 180;
-const VERTICAL_SPACING = 80;
+const VERTICAL_SPACING = 60; // Reduced for compactness
+const LEVEL4_HORIZONTAL_SPACING = 40; // Compact horizontal spacing for level 4
 
 function updateSVGHeight(scrollToTop = false) {
   let maxY = 0;
   let minY = 0;
+  let maxX = 0;
   
   // Get all node positions
   g.selectAll(".node").each(function() {
@@ -106,21 +108,25 @@ function updateSVGHeight(scrollToTop = false) {
     if (transform) {
       const match = transform.match(/translate\(([^,]+),([^)]+)\)/);
       if (match) {
+        const x = parseFloat(match[1]);
         const y = parseFloat(match[2]);
         maxY = Math.max(maxY, y + NODE_HEIGHT/2);
         minY = Math.min(minY, y - NODE_HEIGHT/2);
+        maxX = Math.max(maxX, x + NODE_WIDTH/2);
       }
     }
   });
 
-  // Calculate total height needed, accounting for margins and the initial translate
-  const totalHeight = Math.max(maxY - minY + 200, 600); // Increased margin for better spacing
-  svg.attr("height", totalHeight);
+  // Calculate total height and width needed
+  const totalHeight = Math.max(maxY - minY + 200, 600);
+  const totalWidth = Math.max(maxX + 200, 1200);
+  
+  svg.attr("height", totalHeight).attr("width", totalWidth);
 
   // Adjust scroll position if needed
   if (scrollToTop && minY < 0) {
     const svgTop = svg.node().getBoundingClientRect().top + window.scrollY;
-    const nodeTopY = svgTop + minY + 60; // +60 for initial translate
+    const nodeTopY = svgTop + minY + 60;
     if (window.scrollY > nodeTopY - 20) {
       window.scrollTo({ top: Math.max(nodeTopY - 20, 0), behavior: "smooth" });
     }
@@ -243,6 +249,46 @@ function buildForest(pairs) {
   allRoots = Object.values(nodes).filter(n => !childrenSet.has(n.name));
 }
 
+function assignDepths(node, depth = 1) {
+  node.depth = depth;
+  if (node.children) {
+    node.children.forEach(child => assignDepths(child, depth + 1));
+  }
+  if (node._children) {
+    node._children.forEach(child => assignDepths(child, depth + 1));
+  }
+}
+
+function positionLevel4NodesHorizontally(nodes) {
+  // Group level 4 nodes by their parent (level 3 node)
+  const level4Groups = new Map();
+  
+  nodes.forEach(node => {
+    if (node.depth === 4 && node.parent) {
+      const parentKey = node.parent.data.name;
+      if (!level4Groups.has(parentKey)) {
+        level4Groups.set(parentKey, []);
+      }
+      level4Groups.get(parentKey).push(node);
+    }
+  });
+  
+  // Position each group horizontally to the right of their parent
+  level4Groups.forEach((children, parentKey) => {
+    const parent = children[0].parent;
+    const parentY = parent.x;
+    const startX = parent.y + NODE_WIDTH + 60; // Start well to the right of parent
+    
+    // Sort children to maintain consistent ordering
+    children.sort((a, b) => a.data.name.localeCompare(b.data.name));
+    
+    children.forEach((child, index) => {
+      child.y = startX + (index * (NODE_WIDTH + LEVEL4_HORIZONTAL_SPACING));
+      child.x = parentY; // Same vertical level as parent
+    });
+  });
+}
+
 function drawForest() {
   if (allRoots.length === 0) return;
   
@@ -265,6 +311,7 @@ function drawForest() {
   g.selectAll("*").remove();
   const tree = d3.tree().nodeSize([VERTICAL_SPACING, HORIZONTAL_SPACING]);
   let currentY = 0;
+  
   allRoots.forEach((rootData, index) => {
     const root = d3.hierarchy(rootData);
     root.x0 = 0; root.y0 = 0;
@@ -309,10 +356,17 @@ function drawForest() {
     }
     
     applyStates(root);
+    assignDepths(root);
     
+    // Apply tree layout for levels 1-3
     tree(root);
+    
+    // Get all nodes and apply custom positioning for level 4
+    const allNodes = root.descendants();
+    positionLevel4NodesHorizontally(allNodes);
+    
     let minX = Infinity, maxX = -Infinity;
-    root.descendants().forEach(d => {
+    allNodes.forEach(d => {
       minX = Math.min(minX, d.x);
       maxX = Math.max(maxX, d.x);
     });
@@ -321,9 +375,9 @@ function drawForest() {
     currentY += treeHeight + VERTICAL_MARGIN;
   });
   
-  // Update SVG height after all trees are drawn
+  // Update SVG dimensions after all trees are drawn
   setTimeout(() => {
-    updateSVGHeight(false); // Don't auto-scroll
+    updateSVGHeight(false);
   }, 50);
 
   function collapse(d) {
@@ -333,6 +387,7 @@ function drawForest() {
       d.children = null;
     }
   }
+  
   function truncateText(str, maxWidth, fontSize = 12) {
     const ellipsis = "...";
     const approxCharWidth = fontSize * 0.6;
@@ -340,11 +395,12 @@ function drawForest() {
     if(str.length > maxChars) return str.slice(0, maxChars - ellipsis.length) + ellipsis;
     return str;
   }
+  
   function update(source, offsetY, minX) {
-    tree(source);
     const treeId = source.data.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '');
     const links = source.links();
     const link = g.selectAll(`.link-${treeId}`).data(links, d => d.target.data.name);
+    
     link.enter().append("path")
       .attr("class", `link link-${treeId}`)
       .merge(link)
@@ -353,8 +409,18 @@ function drawForest() {
         const startY = d.source.x - minX + offsetY;
         const endX = d.target.y - NODE_WIDTH/2;
         const endY = d.target.x - minX + offsetY;
-        return `M${startX},${startY} C${(startX+endX)/2},${startY} ${(startX+endX)/2},${endY} ${endX},${endY}`;
+        
+        // For level 4 nodes (horizontal layout), use different connection style
+        if (d.target.depth === 4) {
+          // Straight line from parent to child with a small vertical offset to avoid overlap
+          const midX = startX + 30;
+          return `M${startX},${startY} L${midX},${startY} L${midX},${endY} L${endX},${endY}`;
+        } else {
+          // Standard curved connection for levels 1-3
+          return `M${startX},${startY} C${(startX+endX)/2},${startY} ${(startX+endX)/2},${endY} ${endX},${endY}`;
+        }
       });
+    
     link.exit().remove();
 
     const nodes = source.descendants();
@@ -396,7 +462,6 @@ function drawForest() {
             d.children = d._children;
             d._children = null;
           }
-          // Redraw the entire forest to properly recalculate all positions
           drawForest();
         }
       });
@@ -439,7 +504,6 @@ function drawForest() {
           d.children = d._children;
           d._children = null;
         }
-        // Redraw the entire forest to properly recalculate all positions
         drawForest();
       });
 
@@ -509,5 +573,4 @@ window.addEventListener("resize", () => {
 });
 </script>
 </body>
-
 </html>
