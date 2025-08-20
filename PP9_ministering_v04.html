@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Compact Org Chart with Horizontal 4th Level</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+  body { font-family: Arial, sans-serif; margin:0; padding:0; overflow-x: auto; }
+  .node rect { fill: #fff; stroke: steelblue; stroke-width: 2px; rx: 6px; ry: 6px; }
+  .node text { font: 12px sans-serif; pointer-events: none; }
+  .node image { pointer-events: none; }
+  .link { fill: none; stroke: #ccc; stroke-width: 2px; }
+  svg { width: 100%; overflow: visible; }
+  #controls { margin: 10px 20px; }
+  .tooltip {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    pointer-events: auto;
+    z-index: 1000;
+    max-width: 300px;
+    word-wrap: break-word;
+  }
+  .tooltip a {
+    color: #4da6ff;
+    text-decoration: underline;
+  }
+  .tooltip a:hover {
+    color: #80bfff;
+  }
+  .expand-circle {
+    cursor: pointer;
+  }
+  .expand-circle:hover {
+    stroke-width: 3px;
+  }
+</style>
+</head>
+<body>
+<div id="controls">
+  <button id="toggleExpand">Toggle Expand All</button>
+</div>
+<h2 style="margin-left:20px;">Compact Org Chart with Horizontal 4th Level</h2>
+<svg></svg>
+
+<script>
+const sheetId = "1lwMsXLgpMI3KPYf2AX1k1Y9ErCEJoy88JPhFg_TGXeE";
+const urls = [
+  `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&headers=1`,
+  `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`,
+  `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/A:D?key=AIzaSyD-9tSrke72PouQMnMX-a7EAHI46oO1wI0`
+];
+// Sample data as fallback
+const sampleData = [
+  { manager: null, employee: "CEO John Smith", title: "Chief Executive Officer", photo: "", linkUrl: "https://example.com/ceo" },
+  { manager: "CEO John Smith", employee: "VP Marketing", title: "Vice President of Marketing", photo: "", linkUrl: "https://example.com/vp-marketing" },
+  { manager: "CEO John Smith", employee: "VP Engineering", title: "Vice President of Engineering", photo: "", linkUrl: "https://example.com/vp-engineering" },
+  { manager: "CEO John Smith", employee: "VP Sales", title: "Vice President of Sales", photo: "", linkUrl: "https://example.com/vp-sales" },
+  { manager: "VP Marketing", employee: "Marketing Manager A", title: "Marketing Manager", photo: "", linkUrl: "https://example.com/marketing-mgr-a" },
+  { manager: "VP Marketing", employee: "Marketing Manager B", title: "Marketing Manager", photo: "", linkUrl: "https://example.com/marketing-mgr-b" },
+  { manager: "VP Engineering", employee: "Senior Developer 1", title: "Senior Software Developer", photo: "", linkUrl: "https://example.com/dev-1" },
+  { manager: "VP Engineering", employee: "Senior Developer 2", title: "Senior Software Developer", photo: "", linkUrl: "https://example.com/dev-2" },
+  { manager: "VP Engineering", employee: "QA Lead", title: "Quality Assurance Lead", photo: "", linkUrl: "https://example.com/qa-lead" },
+  { manager: "VP Sales", employee: "Sales Rep 1", title: "Sales Representative", photo: "", linkUrl: "https://example.com/sales-1" },
+  { manager: "VP Sales", employee: "Sales Rep 2", title: "Sales Representative", photo: "", linkUrl: "https://example.com/sales-2" },
+  { manager: "Senior Developer 1", employee: "Junior Dev A", title: "Junior Developer", photo: "", linkUrl: "https://example.com/junior-dev-a" },
+  { manager: "Senior Developer 1", employee: "Junior Dev B", title: "Junior Developer", photo: "", linkUrl: "https://example.com/junior-dev-b" },
+  { manager: "QA Lead", employee: "QA Tester 1", title: "QA Tester", photo: "", linkUrl: "https://example.com/qa-tester-1" },
+  { manager: "QA Lead", employee: "QA Tester 2", title: "QA Tester", photo: "", linkUrl: "https://example.com/qa-tester-2" },
+  { manager: null, employee: "Regional Manager", title: "Regional Manager", photo: "", linkUrl: "https://example.com/regional-mgr" },
+  { manager: "Regional Manager", employee: "District Manager A", title: "District Manager", photo: "", linkUrl: "https://example.com/district-mgr-a" },
+  { manager: "Regional Manager", employee: "District Manager B", title: "District Manager", photo: "", linkUrl: "https://example.com/district-mgr-b" },
+  { manager: "District Manager A", employee: "Store Manager 1", title: "Store Manager", photo: "", linkUrl: "https://example.com/store-mgr-1" },
+  { manager: "District Manager A", employee: "Store Manager 2", title: "Store Manager", photo: "", linkUrl: "https://example.com/store-mgr-2" }
+];
+
+let allRoots = [];
+let expandAll = false;
+const svg = d3.select("svg");
+const g = svg.append("g").attr("transform", "translate(80,60)");
+
+const tooltip = d3.select("body").append("div")
+  .attr("class", "tooltip")
+  .style("opacity", 0)
+  .on("mouseleave", function() {
+    d3.select(this).transition().duration(500).style("opacity", 0);
+  });
+
+const NODE_WIDTH = 160;
+const NODE_HEIGHT = 60;
+const VERTICAL_MARGIN = 80;
+const MAX_PHOTO_SIZE = 60;
+const HORIZONTAL_SPACING = 180;
+const VERTICAL_SPACING = 60; // Reduced for compactness
+const LEVEL4_HORIZONTAL_SPACING = 40; // Compact horizontal spacing for level 4
+
+function updateSVGHeight(scrollToTop = false) {
+  let maxY = 0;
+  let minY = 0;
+  let maxX = 0;
+  
+  // Get all node positions
+  g.selectAll(".node").each(function() {
+    const transform = d3.select(this).attr("transform");
+    if (transform) {
+      const match = transform.match(/translate\(([^,]+),([^)]+)\)/);
+      if (match) {
+        const x = parseFloat(match[1]);
+        const y = parseFloat(match[2]);
+        maxY = Math.max(maxY, y + NODE_HEIGHT/2);
+        minY = Math.min(minY, y - NODE_HEIGHT/2);
+        maxX = Math.max(maxX, x + NODE_WIDTH/2);
+      }
+    }
+  });
+
+  // Calculate total height and width needed
+  const totalHeight = Math.max(maxY - minY + 200, 600);
+  const totalWidth = Math.max(maxX + 200, 1200);
+  
+  svg.attr("height", totalHeight).attr("width", totalWidth);
+
+  // Adjust scroll position if needed
+  if (scrollToTop && minY < 0) {
+    const svgTop = svg.node().getBoundingClientRect().top + window.scrollY;
+    const nodeTopY = svgTop + minY + 60;
+    if (window.scrollY > nodeTopY - 20) {
+      window.scrollTo({ top: Math.max(nodeTopY - 20, 0), behavior: "smooth" });
+    }
+  }
+}
+
+window.addEventListener('load', () => {
+  if (typeof d3 === 'undefined') {
+    console.error('D3.js failed to load');
+    document.body.innerHTML = '<h2>Error: D3.js library failed to load. Please check your internet connection.</h2>';
+    return;
+  }
+  fetchAndRender();
+});
+
+function fetchAndRender() {
+  async function tryFetch(urlIndex = 0) {
+    if (urlIndex >= urls.length) {
+      buildForest(sampleData);
+      drawForest();
+      showFallbackMessage();
+      return;
+    }
+    const currentUrl = urls[urlIndex];
+    try {
+      const response = await fetch(currentUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      const text = await response.text();
+      let data;
+      if (currentUrl.includes('gviz/tq')) {
+        let jsonText = text;
+        if (text.includes('google.visualization.Query.setResponse(')) {
+          const start = text.indexOf('(') + 1;
+          const end = text.lastIndexOf(')');
+          jsonText = text.substring(start, end);
+        }
+        const json = JSON.parse(jsonText);
+        if (json.status !== "ok") throw new Error(`Google Sheets API error: ${json.status}`);
+        const rows = json.table.rows;
+        data = rows.map(r => ({
+          manager: r.c[0]?.v?.toString().trim() || null,
+          employee: r.c[1]?.v?.toString().trim() || null,
+          title: r.c[2]?.v?.toString().trim() || "",
+          photo: r.c[3]?.v?.toString().trim() || "",
+          linkUrl: r.c[4]?.v?.toString().trim() || ""
+        })).filter(item => item.employee);
+      } else if (currentUrl.includes('export?format=csv')) {
+        const lines = text.split('\n');
+        const headers = lines[0].split(',');
+        data = lines.slice(1)
+          .filter(line => line.trim())
+          .map(line => {
+            const values = line.split(',').map(v => v.replace(/"/g, '').trim());
+            return {
+              manager: values[0] || null,
+              employee: values[1] || null,
+              title: values[2] || "",
+              photo: values[3] || "",
+              linkUrl: values[4] || ""
+            };
+          });
+      } else {
+        const json = JSON.parse(text);
+        const rows = json.values;
+        data = rows.slice(1).map(r => ({
+          manager: r[0]?.toString().trim() ?? null,
+          employee: r[1]?.toString().trim() ?? null,
+          title: r[2]?.toString().trim() ?? "",
+          photo: r[3]?.toString().trim() ?? "",
+          linkUrl: r[4]?.toString().trim() ?? ""
+        }));
+      }
+      buildForest(data);
+      drawForest();
+      return;
+    } catch (error) {
+      await tryFetch(urlIndex + 1);
+    }
+  }
+  function showFallbackMessage() {
+    const infoDiv = document.createElement('div');
+    infoDiv.style.cssText = 'background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 10px; margin: 10px 20px; border-radius: 4px;';
+    infoDiv.innerHTML = `
+      <strong>Note:</strong> Could not access Google Sheets data. Using sample data instead.<br>
+      <small>To use your Google Sheet data, ensure the sheet is:</small>
+      <ul style="margin: 5px 0; padding-left: 20px;">
+        <li>Published to the web (File → Share → Publish to web)</li>
+        <li>Set to "Anyone with the link can view"</li>
+        <li>Has columns: Manager | Employee | Title | Photo | Link URL</li>
+      </ul>
+    `;
+    const existingInfo = document.querySelector('.fallback-info');
+    if (!existingInfo) {
+      infoDiv.className = 'fallback-info';
+      document.querySelector('#controls').parentNode.insertBefore(infoDiv, document.querySelector('h2'));
+    }
+  }
+  tryFetch();
+}
+
+function buildForest(pairs) {
+  const nodes = {};
+  const childrenSet = new Set();
+  pairs.forEach(({manager, employee, title, photo, linkUrl}) => {
+    if(manager && !nodes[manager]) {
+      nodes[manager] = { name: manager, title: "", photo: "", linkUrl: "", children: [] };
+    }
+    if(employee && !nodes[employee]) {
+      nodes[employee] = { name: employee, title: title || "", photo: photo || "", linkUrl: linkUrl || "", children: [] };
+    }
+    if(employee && manager) {
+      childrenSet.add(employee);
+    }
+  });
+  pairs.forEach(({manager, employee}) => {
+    if(manager && employee && nodes[manager] && nodes[employee]) {
+      nodes[manager].children.push(nodes[employee]);
+    }
+  });
+  allRoots = Object.values(nodes).filter(n => !childrenSet.has(n.name));
+}
+
+function assignDepths(node, depth = 1) {
+  node.depth = depth;
+  if (node.children) {
+    node.children.forEach(child => assignDepths(child, depth + 1));
+  }
+  if (node._children) {
+    node._children.forEach(child => assignDepths(child, depth + 1));
+  }
+}
+
+function positionLevel4NodesHorizontally(nodes) {
+  // Group level 4 nodes by their parent (level 3 node)
+  const level4Groups = new Map();
+  
+  nodes.forEach(node => {
+    if (node.depth === 4 && node.parent) {
+      const parentKey = node.parent.data.name;
+      if (!level4Groups.has(parentKey)) {
+        level4Groups.set(parentKey, []);
+      }
+      level4Groups.get(parentKey).push(node);
+    }
+  });
+  
+  // Position each group horizontally to the right of their parent
+  level4Groups.forEach((children, parentKey) => {
+    const parent = children[0].parent;
+    const parentY = parent.x;
+    const startX = parent.y + NODE_WIDTH + 60; // Start well to the right of parent
+    
+    // Sort children to maintain consistent ordering
+    children.sort((a, b) => a.data.name.localeCompare(b.data.name));
+    
+    children.forEach((child, index) => {
+      child.y = startX + (index * (NODE_WIDTH + LEVEL4_HORIZONTAL_SPACING));
+      child.x = parentY; // Same vertical level as parent
+    });
+  });
+}
+
+function drawForest() {
+  if (allRoots.length === 0) return;
+  
+  // Store current expand/collapse states before redrawing (only if not using toggle)
+  const nodeStates = new Map();
+  const isToggleAction = arguments[0] === 'toggle';
+  
+  if (!isToggleAction) {
+    g.selectAll(".node").each(function() {
+      const nodeData = d3.select(this).datum();
+      if (nodeData && nodeData.data) {
+        nodeStates.set(nodeData.data.name, {
+          hasChildren: !!nodeData.children,
+          hasHiddenChildren: !!nodeData._children
+        });
+      }
+    });
+  }
+  
+  g.selectAll("*").remove();
+  const tree = d3.tree().nodeSize([VERTICAL_SPACING, HORIZONTAL_SPACING]);
+  let currentY = 0;
+  
+  allRoots.forEach((rootData, index) => {
+    const root = d3.hierarchy(rootData);
+    root.x0 = 0; root.y0 = 0;
+    
+    // Apply expand/collapse states
+    function applyStates(node) {
+      if (isToggleAction) {
+        // Toggle behavior: expand all or collapse all based on expandAll flag
+        if (expandAll) {
+          // Expand everything
+          if (node._children) {
+            node.children = node._children;
+            node._children = null;
+          }
+        } else {
+          // Collapse everything
+          if (node.children) {
+            node._children = node.children;
+            node.children = null;
+          }
+        }
+      } else {
+        // Individual node behavior: try to restore previous state
+        const state = nodeStates.get(node.data.name);
+        if (state && state.hasChildren && node._children) {
+          // Node was previously expanded
+          node.children = node._children;
+          node._children = null;
+        } else if (node.children && (!state || state.hasHiddenChildren)) {
+          // Node should be collapsed (either was previously collapsed or is new)
+          node._children = node.children;
+          node.children = null;
+        }
+      }
+      
+      if (node.children) {
+        node.children.forEach(applyStates);
+      }
+      if (node._children) {
+        node._children.forEach(applyStates);
+      }
+    }
+    
+    applyStates(root);
+    assignDepths(root);
+    
+    // Apply tree layout for levels 1-3
+    tree(root);
+    
+    // Get all nodes and apply custom positioning for level 4
+    const allNodes = root.descendants();
+    positionLevel4NodesHorizontally(allNodes);
+    
+    let minX = Infinity, maxX = -Infinity;
+    allNodes.forEach(d => {
+      minX = Math.min(minX, d.x);
+      maxX = Math.max(maxX, d.x);
+    });
+    const treeHeight = maxX - minX + NODE_HEIGHT + VERTICAL_SPACING;
+    update(root, currentY, minX);
+    currentY += treeHeight + VERTICAL_MARGIN;
+  });
+  
+  // Update SVG dimensions after all trees are drawn
+  setTimeout(() => {
+    updateSVGHeight(false);
+  }, 50);
+
+  function collapse(d) {
+    if(d.children) {
+      d._children = d.children;
+      d._children.forEach(collapse);
+      d.children = null;
+    }
+  }
+  
+  function truncateText(str, maxWidth, fontSize = 12) {
+    const ellipsis = "...";
+    const approxCharWidth = fontSize * 0.6;
+    const maxChars = Math.floor(maxWidth / approxCharWidth);
+    if(str.length > maxChars) return str.slice(0, maxChars - ellipsis.length) + ellipsis;
+    return str;
+  }
+  
+  function update(source, offsetY, minX) {
+    const treeId = source.data.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '');
+    const links = source.links();
+    const link = g.selectAll(`.link-${treeId}`).data(links, d => d.target.data.name);
+    
+    link.enter().append("path")
+      .attr("class", `link link-${treeId}`)
+      .merge(link)
+      .attr("d", d => {
+        const startX = d.source.y + NODE_WIDTH/2;
+        const startY = d.source.x - minX + offsetY;
+        const endX = d.target.y - NODE_WIDTH/2;
+        const endY = d.target.x - minX + offsetY;
+        
+        // For level 4 nodes (horizontal layout), use different connection style
+        if (d.target.depth === 4) {
+          // Straight line from parent to child with a small vertical offset to avoid overlap
+          const midX = startX + 30;
+          return `M${startX},${startY} L${midX},${startY} L${midX},${endY} L${endX},${endY}`;
+        } else {
+          // Standard curved connection for levels 1-3
+          return `M${startX},${startY} C${(startX+endX)/2},${startY} ${(startX+endX)/2},${endY} ${endX},${endY}`;
+        }
+      });
+    
+    link.exit().remove();
+
+    const nodes = source.descendants();
+    const node = g.selectAll(`.node-${treeId}`).data(nodes, d => d.data.name);
+
+    const nodeEnter = node.enter().append("g")
+      .attr("class", `node node-${treeId}`)
+      .attr("transform", d => `translate(${d.y},${d.x - minX + offsetY})`)
+      .style("cursor", "pointer");
+
+    nodeEnter.append("rect")
+      .attr("width", NODE_WIDTH)
+      .attr("height", NODE_HEIGHT)
+      .attr("x", -NODE_WIDTH/2)
+      .attr("y", -NODE_HEIGHT/2)
+      .attr("fill", "#fff")
+      .attr("stroke", "steelblue")
+      .attr("stroke-width", 2)
+      .attr("rx", 6)
+      .attr("ry", 6);
+
+    nodeEnter.append("rect")
+      .attr("width", NODE_WIDTH)
+      .attr("height", NODE_HEIGHT)
+      .attr("x", -NODE_WIDTH/2)
+      .attr("y", -NODE_HEIGHT/2)
+      .attr("fill", "#fff")
+      .attr("stroke", "steelblue")
+      .attr("stroke-width", 2)
+      .attr("rx", 6)
+      .attr("ry", 6)
+      .on("click", (event, d) => {
+        event.stopPropagation();
+        if(d.children || d._children) {
+          if(d.children) {
+            d._children = d.children;
+            d.children = null;
+          } else if(d._children) {
+            d.children = d._children;
+            d._children = null;
+          }
+          drawForest();
+        }
+      });
+
+    const nameText = nodeEnter.append("text")
+      .attr("class", "node-name")
+      .attr("x", 0)
+      .attr("y", -2)
+      .attr("text-anchor", "middle")
+      .style("cursor", "default")
+      .style("pointer-events", "none")
+      .text(d => truncateText(d.data.name, NODE_WIDTH - 10));
+
+    nodeEnter.append("text")
+      .attr("class", "node-title")
+      .attr("x", 0)
+      .attr("y", 16)
+      .attr("text-anchor", "middle")
+      .attr("font-size", "10px")
+      .attr("fill", "#555")
+      .text(d => truncateText(d.data.title, NODE_WIDTH - 10, 10));
+
+    const expandableNodes = nodeEnter.filter(d => d.children || d._children);
+
+    expandableNodes.append("circle")
+      .attr("class", "expand-circle")
+      .attr("r", 8)
+      .attr("cx", NODE_WIDTH/2 - 12)
+      .attr("cy", -NODE_HEIGHT/2 + 12)
+      .attr("fill", d => d.children ? "#ff6b6b" : "#4ecdc4")
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 2)
+      .style("pointer-events", "auto")
+      .on("click", (event, d) => {
+        event.stopPropagation();
+        if(d.children) {
+          d._children = d.children;
+          d.children = null;
+        } else if(d._children) {
+          d.children = d._children;
+          d._children = null;
+        }
+        drawForest();
+      });
+
+    expandableNodes.append("text")
+      .attr("class", "expand-indicator")
+      .attr("x", NODE_WIDTH/2 - 12)
+      .attr("y", -NODE_HEIGHT/2 + 16)
+      .attr("text-anchor", "middle")
+      .attr("font-size", "12px")
+      .attr("font-weight", "bold")
+      .attr("fill", "#fff")
+      .attr("pointer-events", "none")
+      .text(d => d.children ? "−" : "+");
+
+    nodeEnter
+      .on("mouseover", (event, d) => {
+        const fullTitle = d.data.title;
+        const truncatedTitle = truncateText(d.data.title, NODE_WIDTH - 10, 10);
+        let tooltipContent = `<strong>${d.data.name}</strong>`;
+        if (fullTitle !== truncatedTitle && fullTitle.length > 0) {
+          tooltipContent += `<br/>${fullTitle}`;
+        }
+        if (d.data.linkUrl) {
+          tooltipContent += `<br/><a href="${d.data.linkUrl}" target="_blank">Visit Profile →</a>`;
+        }
+        if ((fullTitle !== truncatedTitle && fullTitle.length > 0) || d.data.linkUrl) {
+          tooltip.transition().duration(200).style("opacity", .9);
+          tooltip.html(tooltipContent)
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 10) + "px");
+        }
+      })
+      .on("mouseleave", (event, d) => {
+        setTimeout(() => {
+          if (!tooltip.node().matches(':hover')) {
+            tooltip.transition().duration(500).style("opacity", 0);
+          }
+        }, 100);
+      });
+
+    const nodeUpdate = nodeEnter.merge(node);
+
+    nodeUpdate.select(".expand-circle")
+      .attr("fill", d => d.children ? "#ff6b6b" : "#4ecdc4");
+    nodeUpdate.select(".expand-indicator")
+      .text(d => d.children ? "−" : "+");
+    nodeUpdate.select(".node-name")
+      .style("cursor", "default");
+
+    nodeUpdate.transition().duration(300)
+      .attr("transform", d => `translate(${d.y},${d.x - minX + offsetY})`);
+
+    node.exit().remove();
+
+    source.descendants().forEach(d => { d.x0 = d.x; d.y0 = d.y; });
+  }
+}
+
+document.getElementById("toggleExpand").addEventListener("click", () => {
+  expandAll = !expandAll;
+  drawForest('toggle');
+});
+
+window.addEventListener("resize", () => {
+  if (allRoots.length === 0) return;
+  drawForest();
+});
+</script>
+</body>
+</html>
