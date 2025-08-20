@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>PP9 Ministering Diagram</title>
+<title>Collapsible Org Chart with Tooltips & Disconnected Nodes</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <style>
   body { font-family: Arial, sans-serif; margin:0; padding:0; overflow-x: auto; }
@@ -43,7 +43,7 @@
 <div id="controls">
   <button id="toggleExpand">Toggle Expand All</button>
 </div>
-<h2 style="margin-left:20px;">PP9 Ministering Diagram</h2>
+<h2 style="margin-left:20px;">Collapsible Org Chart with Tooltips & Disconnected Nodes</h2>
 <svg></svg>
 
 <script>
@@ -78,7 +78,7 @@ const sampleData = [
 ];
 
 let allRoots = [];
-let expandAll = true;
+let expandAll = false;
 const svg = d3.select("svg");
 const g = svg.append("g").attr("transform", "translate(80,60)");
 
@@ -99,6 +99,8 @@ const VERTICAL_SPACING = 80;
 function updateSVGHeight(scrollToTop = false) {
   let maxY = 0;
   let minY = 0;
+  
+  // Get all node positions
   g.selectAll(".node").each(function() {
     const transform = d3.select(this).attr("transform");
     if (transform) {
@@ -111,9 +113,11 @@ function updateSVGHeight(scrollToTop = false) {
     }
   });
 
-  const totalHeight = Math.max(maxY - minY + 120, 600);
+  // Calculate total height needed, accounting for margins and the initial translate
+  const totalHeight = Math.max(maxY - minY + 200, 600); // Increased margin for better spacing
   svg.attr("height", totalHeight);
 
+  // Adjust scroll position if needed
   if (scrollToTop && minY < 0) {
     const svgTop = svg.node().getBoundingClientRect().top + window.scrollY;
     const nodeTopY = svgTop + minY + 60; // +60 for initial translate
@@ -241,13 +245,71 @@ function buildForest(pairs) {
 
 function drawForest() {
   if (allRoots.length === 0) return;
+  
+  // Store current expand/collapse states before redrawing (only if not using toggle)
+  const nodeStates = new Map();
+  const isToggleAction = arguments[0] === 'toggle';
+  
+  if (!isToggleAction) {
+    g.selectAll(".node").each(function() {
+      const nodeData = d3.select(this).datum();
+      if (nodeData && nodeData.data) {
+        nodeStates.set(nodeData.data.name, {
+          hasChildren: !!nodeData.children,
+          hasHiddenChildren: !!nodeData._children
+        });
+      }
+    });
+  }
+  
   g.selectAll("*").remove();
   const tree = d3.tree().nodeSize([VERTICAL_SPACING, HORIZONTAL_SPACING]);
   let currentY = 0;
   allRoots.forEach((rootData, index) => {
     const root = d3.hierarchy(rootData);
     root.x0 = 0; root.y0 = 0;
-    if(!expandAll && root.children) root.children.forEach(collapse);
+    
+    // Apply expand/collapse states
+    function applyStates(node) {
+      if (isToggleAction) {
+        // Toggle behavior: expand all or collapse all based on expandAll flag
+        if (expandAll) {
+          // Expand everything
+          if (node._children) {
+            node.children = node._children;
+            node._children = null;
+          }
+        } else {
+          // Collapse everything
+          if (node.children) {
+            node._children = node.children;
+            node.children = null;
+          }
+        }
+      } else {
+        // Individual node behavior: try to restore previous state
+        const state = nodeStates.get(node.data.name);
+        if (state && state.hasChildren && node._children) {
+          // Node was previously expanded
+          node.children = node._children;
+          node._children = null;
+        } else if (node.children && (!state || state.hasHiddenChildren)) {
+          // Node should be collapsed (either was previously collapsed or is new)
+          node._children = node.children;
+          node.children = null;
+        }
+      }
+      
+      if (node.children) {
+        node.children.forEach(applyStates);
+      }
+      if (node._children) {
+        node._children.forEach(applyStates);
+      }
+    }
+    
+    applyStates(root);
+    
     tree(root);
     let minX = Infinity, maxX = -Infinity;
     root.descendants().forEach(d => {
@@ -258,8 +320,11 @@ function drawForest() {
     update(root, currentY, minX);
     currentY += treeHeight + VERTICAL_MARGIN;
   });
-  const totalHeight = Math.max(currentY, 600);
-  svg.attr("height", totalHeight);
+  
+  // Update SVG height after all trees are drawn
+  setTimeout(() => {
+    updateSVGHeight(false); // Don't auto-scroll
+  }, 50);
 
   function collapse(d) {
     if(d.children) {
@@ -311,7 +376,16 @@ function drawForest() {
       .attr("rx", 6)
       .attr("ry", 6);
 
-    nodeEnter.select("rect")
+    nodeEnter.append("rect")
+      .attr("width", NODE_WIDTH)
+      .attr("height", NODE_HEIGHT)
+      .attr("x", -NODE_WIDTH/2)
+      .attr("y", -NODE_HEIGHT/2)
+      .attr("fill", "#fff")
+      .attr("stroke", "steelblue")
+      .attr("stroke-width", 2)
+      .attr("rx", 6)
+      .attr("ry", 6)
       .on("click", (event, d) => {
         event.stopPropagation();
         if(d.children || d._children) {
@@ -322,10 +396,8 @@ function drawForest() {
             d.children = d._children;
             d._children = null;
           }
-          update(source, offsetY, minX);
-          setTimeout(() => {
-            updateSVGHeight(true);
-          }, 350);
+          // Redraw the entire forest to properly recalculate all positions
+          drawForest();
         }
       });
 
@@ -334,15 +406,9 @@ function drawForest() {
       .attr("x", 0)
       .attr("y", -2)
       .attr("text-anchor", "middle")
-      .style("cursor", d => d.data.linkUrl ? "pointer" : "default")
-      .style("pointer-events", "auto")
+      .style("cursor", "default")
+      .style("pointer-events", "none")
       .text(d => truncateText(d.data.name, NODE_WIDTH - 10));
-
-    nameText.filter(d => d.data.linkUrl)
-      .on("click", (event, d) => {
-        event.stopPropagation();
-        window.open(d.data.linkUrl, "_blank");
-      });
 
     nodeEnter.append("text")
       .attr("class", "node-title")
@@ -373,10 +439,8 @@ function drawForest() {
           d.children = d._children;
           d._children = null;
         }
-        update(source, offsetY, minX);
-        setTimeout(() => {
-          updateSVGHeight(true);
-        }, 350);
+        // Redraw the entire forest to properly recalculate all positions
+        drawForest();
       });
 
     expandableNodes.append("text")
@@ -423,7 +487,7 @@ function drawForest() {
     nodeUpdate.select(".expand-indicator")
       .text(d => d.children ? "−" : "+");
     nodeUpdate.select(".node-name")
-      .style("cursor", d => d.data.linkUrl ? "pointer" : "default");
+      .style("cursor", "default");
 
     nodeUpdate.transition().duration(300)
       .attr("transform", d => `translate(${d.y},${d.x - minX + offsetY})`);
@@ -436,20 +500,13 @@ function drawForest() {
 
 document.getElementById("toggleExpand").addEventListener("click", () => {
   expandAll = !expandAll;
-  drawForest();
-  setTimeout(() => {
-    updateSVGHeight(true);
-  }, 350);
+  drawForest('toggle');
 });
 
 window.addEventListener("resize", () => {
   if (allRoots.length === 0) return;
   drawForest();
-  setTimeout(() => {
-    updateSVGHeight();
-  }, 350);
 });
 </script>
 </body>
-
 </html>
