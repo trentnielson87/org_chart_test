@@ -11,12 +11,6 @@
     margin: 0; 
     padding: 0; 
     overflow-x: auto; 
-    -webkit-touch-callout: none;
-    -webkit-user-select: none;
-    -khtml-user-select: none;
-    -moz-user-select: none;
-    -ms-user-select: none;
-    user-select: none;
   }
   
   #svg-container {
@@ -25,7 +19,7 @@
     overflow: auto;
     border: 1px solid #aaa;
     background: #fff;
-    touch-action: pan-x pan-y;
+    touch-action: manipulation;
   }
   
   .node rect { 
@@ -138,7 +132,7 @@
 <div id="controls">
   <button id="toggleExpand">Toggle Expand All</button>
 </div>
-<h2 style="margin-left:20px;">PP9 Ministering</h2>
+<h2 style="margin-left:20px;">PP9 Ministering_v02</h2>
 <div id="svg-container">
   <svg></svg>
 </div>
@@ -678,15 +672,17 @@ function drawForest() {
 
     // Event handlers for main node area
     if (isMobile) {
-      // Touch/tap events for mobile
-      interactiveRect.on("click", function(event, d) {
+      // Touch/tap events for mobile - simplified approach
+      interactiveRect.on("touchstart click", function(event, d) {
+        console.log(`Mobile tap on ${d.data.name}, hasChildren: ${!!(d.children || d._children)}`);
+        event.preventDefault();
+        event.stopPropagation();
+        
         if (d.children || d._children) {
-          // If it's expandable, ALWAYS handle expand/collapse first
+          // If it's expandable, handle expand/collapse
           handleExpandCollapse(event, d);
         } else if (shouldShowTooltip(d)) {
           // Only show tooltip for non-expandable nodes
-          event.preventDefault();
-          event.stopPropagation();
           const content = createTooltipContent(d);
           showTooltip(content, event);
         }
@@ -756,10 +752,14 @@ document.addEventListener('click', function(event) {
   }
 });
 
-// Prevent default touch behaviors that might interfere
+// Prevent default touch behaviors that might interfere - but allow pinch zoom
 document.addEventListener('touchstart', function(event) {
+  // Only prevent default for expand circles and interactive rects, not general touch
   if (event.target.closest('.expand-circle') || event.target.closest('.node-interactive')) {
-    event.preventDefault();
+    // Allow multi-touch for pinch zoom
+    if (event.touches.length === 1) {
+      event.preventDefault();
+    }
   }
 }, { passive: false });
 
