@@ -138,7 +138,7 @@
 <div id="controls">
   <button id="toggleExpand">Toggle Expand All</button>
 </div>
-<h2 style="margin-left:20px;">PP9 Ministering_v01</h2>
+<h2 style="margin-left:20px;">PP9 Ministering</h2>
 <div id="svg-container">
   <svg></svg>
 </div>
@@ -681,10 +681,10 @@ function drawForest() {
       // Touch/tap events for mobile
       interactiveRect.on("click", function(event, d) {
         if (d.children || d._children) {
-          // If it's expandable, handle expand/collapse
+          // If it's expandable, ALWAYS handle expand/collapse first
           handleExpandCollapse(event, d);
         } else if (shouldShowTooltip(d)) {
-          // If it's not expandable and has tooltip content, show tooltip
+          // Only show tooltip for non-expandable nodes
           event.preventDefault();
           event.stopPropagation();
           const content = createTooltipContent(d);
