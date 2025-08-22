@@ -2,51 +2,133 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PP9 Ministering</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <style>
-  body { font-family: Arial, sans-serif; margin:0; padding:0; overflow-x: auto; }
+  body { 
+    font-family: Arial, sans-serif; 
+    margin: 0; 
+    padding: 0; 
+    overflow-x: auto; 
+  }
+  
   #svg-container {
     width: 100vw;
     height: 80vh;
     overflow: auto;
     border: 1px solid #aaa;
     background: #fff;
+    touch-action: manipulation;
   }
-  .node rect { fill: #fff; stroke: steelblue; stroke-width: 2px; rx: 6px; ry: 6px; }
-  .node text { font: 12px sans-serif; pointer-events: none; }
-  .node image { pointer-events: none; }
-  .link { fill: none; stroke: #ccc; stroke-width: 2px; }
-  svg { display: block; }
-  #controls { margin: 10px 20px; }
+  
+  .node rect { 
+    fill: #fff; 
+    stroke: steelblue; 
+    stroke-width: 2px; 
+    rx: 6px; 
+    ry: 6px; 
+  }
+  
+  .node text { 
+    font: 12px sans-serif; 
+    pointer-events: none; 
+  }
+  
+  .node image { 
+    pointer-events: none; 
+  }
+  
+  .link { 
+    fill: none; 
+    stroke: #ccc; 
+    stroke-width: 2px; 
+  }
+  
+  svg { 
+    display: block; 
+  }
+  
+  #controls { 
+    margin: 10px 20px; 
+  }
+  
   .tooltip {
     position: absolute;
-    background: rgba(0, 0, 0, 0.8);
+    background: rgba(0, 0, 0, 0.9);
     color: white;
-    padding: 8px 12px;
-    border-radius: 4px;
-    font-size: 12px;
-    pointer-events: auto;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    pointer-events: none;
     z-index: 1000;
-    max-width: 300px;
+    max-width: 280px;
     word-wrap: break-word;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    transition: opacity 0.2s ease;
   }
+  
   .tooltip a {
     color: #4da6ff;
     text-decoration: underline;
+    pointer-events: auto;
   }
+  
   .tooltip a:hover {
     color: #80bfff;
   }
+  
   .expand-circle {
     cursor: pointer;
   }
+  
   .expand-circle:hover {
     stroke-width: 3px;
+  }
+  
+  .node-interactive {
+    cursor: pointer;
+  }
+  
+  /* Mobile-specific styles */
+  @media (max-width: 768px) {
+    .tooltip {
+      font-size: 16px;
+      padding: 16px 20px;
+      max-width: 90vw;
+      border-radius: 12px;
+    }
+    
+    .node rect {
+      stroke-width: 3px;
+    }
+    
+    .expand-circle {
+      r: 10;
+    }
+    
+    #controls button {
+      padding: 12px 20px;
+      font-size: 16px;
+      touch-action: manipulation;
+    }
+  }
+  
+  /* Overlay for mobile tooltip dismissal */
+  .tooltip-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 999;
+    background: transparent;
+    display: none;
   }
 </style>
 </head>
 <body>
+<div class="tooltip-overlay" id="tooltipOverlay"></div>
 <div id="controls">
   <button id="toggleExpand">Toggle Expand All</button>
 </div>
@@ -62,6 +144,7 @@ const urls = [
   `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`,
   `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/A:D?key=AIzaSyD-9tSrke72PouQMnMX-a7EAHI46oO1wI0`
 ];
+
 // Sample data as fallback
 const sampleData = [
   { manager: null, employee: "CEO John Smith", title: "Chief Executive Officer", photo: "", linkUrl: "https://example.com/ceo" },
@@ -88,30 +171,86 @@ const sampleData = [
 
 let allRoots = [];
 let expandAll = false;
+let isMobile = window.innerWidth <= 768 || ('ontouchstart' in window);
+let tooltipTimeout;
+
 const svg = d3.select("#svg-container svg");
 const g = svg.append("g").attr("transform", "translate(80,60)");
 
 const tooltip = d3.select("body").append("div")
   .attr("class", "tooltip")
-  .style("opacity", 0)
-  .on("mouseleave", function() {
-    d3.select(this).transition().duration(500).style("opacity", 0);
-  });
+  .style("opacity", 0);
 
-const NODE_WIDTH = 160;
-const NODE_HEIGHT = 60;
+const tooltipOverlay = d3.select("#tooltipOverlay");
+
+const NODE_WIDTH = 250;
+const NODE_HEIGHT = 80;
 const VERTICAL_MARGIN = 80;
 const MAX_PHOTO_SIZE = 60;
-const HORIZONTAL_SPACING = 180;
-const VERTICAL_SPACING = 60; // Reduced for compactness
-const LEVEL4_HORIZONTAL_SPACING = 40; // Compact horizontal spacing for level 4
+const HORIZONTAL_SPACING = 280;
+const VERTICAL_SPACING = 90;
+const LEVEL4_HORIZONTAL_SPACING = 60;
+
+// Mobile detection and handling
+function detectMobile() {
+  isMobile = window.innerWidth <= 768 || ('ontouchstart' in window);
+}
+
+function hideTooltip() {
+  clearTimeout(tooltipTimeout);
+  tooltip.transition().duration(300).style("opacity", 0);
+  tooltipOverlay.style("display", "none");
+}
+
+function showTooltip(content, event) {
+  clearTimeout(tooltipTimeout);
+  
+  tooltip.html(content)
+    .style("opacity", 0)
+    .style("left", "0px")
+    .style("top", "0px");
+
+  // Get tooltip dimensions
+  const tooltipNode = tooltip.node();
+  const tooltipRect = tooltipNode.getBoundingClientRect();
+  
+  let left, top;
+  
+  if (isMobile) {
+    // Center tooltip on mobile
+    left = (window.innerWidth - tooltipRect.width) / 2;
+    top = Math.max(20, (window.innerHeight - tooltipRect.height) / 3);
+    tooltipOverlay.style("display", "block");
+  } else {
+    // Position relative to mouse on desktop
+    left = event.pageX + 15;
+    top = event.pageY - 10;
+    
+    // Prevent tooltip from going off-screen
+    if (left + tooltipRect.width > window.innerWidth - 20) {
+      left = event.pageX - tooltipRect.width - 15;
+    }
+    if (top + tooltipRect.height > window.innerHeight + window.scrollY - 20) {
+      top = event.pageY - tooltipRect.height - 10;
+    }
+  }
+  
+  tooltip
+    .style("left", left + "px")
+    .style("top", top + "px")
+    .transition()
+    .duration(200)
+    .style("opacity", 1);
+}
+
+// Handle overlay clicks for mobile
+tooltipOverlay.on("click", hideTooltip);
 
 function updateSVGHeight(scrollToTop = false) {
   let maxY = 0;
   let minY = 0;
   let maxX = 0;
   
-  // Get all node positions
   g.selectAll(".node").each(function() {
     const transform = d3.select(this).attr("transform");
     if (transform) {
@@ -126,13 +265,11 @@ function updateSVGHeight(scrollToTop = false) {
     }
   });
 
-  // Calculate total height and width needed
   const totalHeight = Math.max(maxY - minY + 200, 600);
   const totalWidth = Math.max(maxX + 200, 1200);
   
   svg.attr("height", totalHeight).attr("width", totalWidth);
 
-  // Adjust scroll position if needed
   if (scrollToTop && minY < 0) {
     const svgTop = svg.node().getBoundingClientRect().top + window.scrollY;
     const nodeTopY = svgTop + minY + 60;
@@ -143,12 +280,19 @@ function updateSVGHeight(scrollToTop = false) {
 }
 
 window.addEventListener('load', () => {
+  detectMobile();
   if (typeof d3 === 'undefined') {
     console.error('D3.js failed to load');
     document.body.innerHTML = '<h2>Error: D3.js library failed to load. Please check your internet connection.</h2>';
     return;
   }
   fetchAndRender();
+});
+
+window.addEventListener('resize', () => {
+  detectMobile();
+  if (allRoots.length === 0) return;
+  drawForest();
 });
 
 function fetchAndRender() {
@@ -268,9 +412,7 @@ function assignDepths(node, depth = 1) {
   }
 }
 
-// This function will overwrite level 4 node positions so they do not add vertical space
 function positionLevel4NodesHorizontally(nodes) {
-  // Group level 4 nodes by their parent (level 3 node)
   const level4Groups = new Map();
   nodes.forEach(node => {
     if (node.depth === 4 && node.parent) {
@@ -282,18 +424,16 @@ function positionLevel4NodesHorizontally(nodes) {
     }
   });
 
-  // For each group, position horizontally and override their y/x
   level4Groups.forEach((children, parentKey) => {
     const parent = children[0].parent;
-    const parentY = parent.x; // vertical position
-    const startX = parent.y + NODE_WIDTH + 60; // right of parent
+    const parentY = parent.x;
+    const startX = parent.y + NODE_WIDTH + 60;
 
-    // Sort for consistent ordering
     children.sort((a, b) => a.data.name.localeCompare(b.data.name));
 
     children.forEach((child, index) => {
       child.y = startX + (index * (NODE_WIDTH + LEVEL4_HORIZONTAL_SPACING));
-      child.x = parentY; // keep same vertical as parent
+      child.x = parentY;
     });
   });
 }
@@ -301,7 +441,6 @@ function positionLevel4NodesHorizontally(nodes) {
 function drawForest() {
   if (allRoots.length === 0) return;
   
-  // Store current expand/collapse states before redrawing (only if not using toggle)
   const nodeStates = new Map();
   const isToggleAction = arguments[0] === 'toggle';
   
@@ -325,32 +464,25 @@ function drawForest() {
     const root = d3.hierarchy(rootData);
     root.x0 = 0; root.y0 = 0;
     
-    // Apply expand/collapse states
     function applyStates(node) {
       if (isToggleAction) {
-        // Toggle behavior: expand all or collapse all based on expandAll flag
         if (expandAll) {
-          // Expand everything
           if (node._children) {
             node.children = node._children;
             node._children = null;
           }
         } else {
-          // Collapse everything
           if (node.children) {
             node._children = node.children;
             node.children = null;
           }
         }
       } else {
-        // Individual node behavior: try to restore previous state
         const state = nodeStates.get(node.data.name);
         if (state && state.hasChildren && node._children) {
-          // Node was previously expanded
           node.children = node._children;
           node._children = null;
         } else if (node.children && (!state || state.hasHiddenChildren)) {
-          // Node should be collapsed (either was previously collapsed or is new)
           node._children = node.children;
           node.children = null;
         }
@@ -367,14 +499,11 @@ function drawForest() {
     applyStates(root);
     assignDepths(root);
 
-    // Layout all nodes (including level 4) normally
     tree(root);
 
-    // Overwrite level 4 node positions for horizontal layout, and keep vertical position unchanged on parent open
     const allNodes = root.descendants();
     positionLevel4NodesHorizontally(allNodes);
 
-    // Only consider depth <= 3 nodes for vertical min/max
     let minX = Infinity, maxX = -Infinity;
     allNodes.forEach(d => {
       if (d.depth <= 3) {
@@ -387,7 +516,6 @@ function drawForest() {
     currentY += treeHeight + VERTICAL_MARGIN;
   });
   
-  // Update SVG dimensions after all trees are drawn
   setTimeout(() => {
     updateSVGHeight(false);
   }, 50);
@@ -422,13 +550,10 @@ function drawForest() {
         const endX = d.target.y - NODE_WIDTH/2;
         const endY = d.target.x - minX + offsetY;
         
-        // For level 4 nodes (horizontal layout), use different connection style
         if (d.target.depth === 4) {
-          // Straight line from parent to child with a small vertical offset to avoid overlap
           const midX = startX + 30;
           return `M${startX},${startY} L${midX},${startY} L${midX},${endY} L${endX},${endY}`;
         } else {
-          // Standard curved connection for levels 1-3
           return `M${startX},${startY} C${(startX+endX)/2},${startY} ${(startX+endX)/2},${endY} ${endX},${endY}`;
         }
       });
@@ -440,8 +565,7 @@ function drawForest() {
 
     const nodeEnter = node.enter().append("g")
       .attr("class", `node node-${treeId}`)
-      .attr("transform", d => `translate(${d.y},${d.x - minX + offsetY})`)
-      .style("cursor", "pointer");
+      .attr("transform", d => `translate(${d.y},${d.x - minX + offsetY})`);
 
     nodeEnter.append("rect")
       .attr("width", NODE_WIDTH)
@@ -454,38 +578,23 @@ function drawForest() {
       .attr("rx", 6)
       .attr("ry", 6);
 
-    nodeEnter.append("rect")
+    // Interactive rectangle for node clicks and touches
+    const interactiveRect = nodeEnter.append("rect")
+      .attr("class", "node-interactive")
       .attr("width", NODE_WIDTH)
       .attr("height", NODE_HEIGHT)
       .attr("x", -NODE_WIDTH/2)
       .attr("y", -NODE_HEIGHT/2)
-      .attr("fill", "#fff")
-      .attr("stroke", "steelblue")
-      .attr("stroke-width", 2)
-      .attr("rx", 6)
-      .attr("ry", 6)
-      .on("click", (event, d) => {
-        event.stopPropagation();
-        if(d.children || d._children) {
-          if(d.children) {
-            d._children = d.children;
-            d.children = null;
-          } else if(d._children) {
-            d.children = d._children;
-            d._children = null;
-          }
-          drawForest();
-        }
-      });
+      .attr("fill", "transparent")
+      .attr("cursor", "pointer");
 
     const nameText = nodeEnter.append("text")
       .attr("class", "node-name")
       .attr("x", 0)
       .attr("y", -2)
       .attr("text-anchor", "middle")
-      .style("cursor", "default")
       .style("pointer-events", "none")
-      .text(d => truncateText(d.data.name, NODE_WIDTH - 10));
+      .text(d => truncateText(d.data.name, NODE_WIDTH - 20));
 
     nodeEnter.append("text")
       .attr("class", "node-title")
@@ -494,21 +603,38 @@ function drawForest() {
       .attr("text-anchor", "middle")
       .attr("font-size", "10px")
       .attr("fill", "#555")
-      .text(d => truncateText(d.data.title, NODE_WIDTH - 10, 10));
+      .style("pointer-events", "none")
+      .text(d => truncateText(d.data.title, NODE_WIDTH - 20, 10));
 
     const expandableNodes = nodeEnter.filter(d => d.children || d._children);
 
     expandableNodes.append("circle")
       .attr("class", "expand-circle")
-      .attr("r", 8)
+      .attr("r", isMobile ? 10 : 8)
       .attr("cx", NODE_WIDTH/2 - 12)
       .attr("cy", -NODE_HEIGHT/2 + 12)
       .attr("fill", d => d.children ? "#ff6b6b" : "#4ecdc4")
       .attr("stroke", "#fff")
       .attr("stroke-width", 2)
-      .style("pointer-events", "auto")
-      .on("click", (event, d) => {
-        event.stopPropagation();
+      .style("cursor", "pointer");
+
+    expandableNodes.append("text")
+      .attr("class", "expand-indicator")
+      .attr("x", NODE_WIDTH/2 - 12)
+      .attr("y", -NODE_HEIGHT/2 + 16)
+      .attr("text-anchor", "middle")
+      .attr("font-size", isMobile ? "14px" : "12px")
+      .attr("font-weight", "bold")
+      .attr("fill", "#fff")
+      .attr("pointer-events", "none")
+      .text(d => d.children ? "−" : "+");
+
+    // Handle expand/collapse
+    function handleExpandCollapse(event, d) {
+      event.stopPropagation();
+      hideTooltip(); // Hide any open tooltips
+      
+      if(d.children || d._children) {
         if(d.children) {
           d._children = d.children;
           d.children = null;
@@ -517,53 +643,97 @@ function drawForest() {
           d._children = null;
         }
         drawForest();
-      });
+      }
+    }
 
-    expandableNodes.append("text")
-      .attr("class", "expand-indicator")
-      .attr("x", NODE_WIDTH/2 - 12)
-      .attr("y", -NODE_HEIGHT/2 + 16)
-      .attr("text-anchor", "middle")
-      .attr("font-size", "12px")
-      .attr("font-weight", "bold")
-      .attr("fill", "#fff")
-      .attr("pointer-events", "none")
-      .text(d => d.children ? "−" : "+");
+    // Handle tooltip display
+    function shouldShowTooltip(d) {
+      const fullTitle = d.data.title;
+      const truncatedTitle = truncateText(d.data.title, NODE_WIDTH - 10, 10);
+      return (fullTitle !== truncatedTitle && fullTitle.length > 0) || d.data.linkUrl;
+    }
 
-    nodeEnter
-      .on("mouseover", (event, d) => {
-        const fullTitle = d.data.title;
-        const truncatedTitle = truncateText(d.data.title, NODE_WIDTH - 10, 10);
-        let tooltipContent = `<strong>${d.data.name}</strong>`;
-        if (fullTitle !== truncatedTitle && fullTitle.length > 0) {
-          tooltipContent += `<br/>${fullTitle}`;
+    function createTooltipContent(d) {
+      const fullTitle = d.data.title;
+      const truncatedTitle = truncateText(d.data.title, NODE_WIDTH - 10, 10);
+      let tooltipContent = `<strong>${d.data.name}</strong>`;
+      
+      if (fullTitle !== truncatedTitle && fullTitle.length > 0) {
+        tooltipContent += `<br/>${fullTitle}`;
+      }
+      if (d.data.linkUrl) {
+        tooltipContent += `<br/><a href="${d.data.linkUrl}" target="_blank">Visit Profile →</a>`;
+      }
+      return tooltipContent;
+    }
+
+    // Add click handlers for expand/collapse circles only
+    expandableNodes.select(".expand-circle").on("click", handleExpandCollapse);
+
+    // Event handlers for main node area
+    if (isMobile) {
+      // Touch/tap events for mobile - simplified approach
+      interactiveRect.on("touchstart click", function(event, d) {
+        console.log(`Mobile tap on ${d.data.name}, hasChildren: ${!!(d.children || d._children)}`);
+        event.preventDefault();
+        event.stopPropagation();
+        
+        if (d.children || d._children) {
+          // If it's expandable, handle expand/collapse
+          handleExpandCollapse(event, d);
+        } else if (shouldShowTooltip(d)) {
+          // Only show tooltip for non-expandable nodes
+          const content = createTooltipContent(d);
+          showTooltip(content, event);
         }
-        if (d.data.linkUrl) {
-          tooltipContent += `<br/><a href="${d.data.linkUrl}" target="_blank">Visit Profile →</a>`;
-        }
-        if ((fullTitle !== truncatedTitle && fullTitle.length > 0) || d.data.linkUrl) {
-          tooltip.transition().duration(200).style("opacity", .9);
-          tooltip.html(tooltipContent)
-            .style("left", (event.pageX + 10) + "px")
-            .style("top", (event.pageY - 10) + "px");
-        }
-      })
-      .on("mouseleave", (event, d) => {
-        setTimeout(() => {
-          if (!tooltip.node().matches(':hover')) {
-            tooltip.transition().duration(500).style("opacity", 0);
-          }
-        }, 100);
       });
+    } else {
+      // Desktop: Use .call() to attach multiple event handlers without conflicts
+      interactiveRect.call(function(selection) {
+        selection
+          .on("mouseenter", function(event, d) {
+            console.log(`Mouseenter on ${d.data.name}, shouldShow: ${shouldShowTooltip(d)}, hasChildren: ${!!(d.children || d._children)}`);
+            if (shouldShowTooltip(d)) {
+              const content = createTooltipContent(d);
+              showTooltip(content, event);
+            }
+          })
+          .on("mouseleave", function(event, d) {
+            tooltipTimeout = setTimeout(hideTooltip, 300);
+          })
+          .on("mousemove", function(event, d) {
+            if (tooltip.style("opacity") > 0) {
+              const tooltipRect = tooltip.node().getBoundingClientRect();
+              let left = event.pageX + 15;
+              let top = event.pageY - 10;
+              
+              if (left + tooltipRect.width > window.innerWidth - 20) {
+                left = event.pageX - tooltipRect.width - 15;
+              }
+              if (top + tooltipRect.height > window.innerHeight + window.scrollY - 20) {
+                top = event.pageY - tooltipRect.height - 10;
+              }
+              
+              tooltip
+                .style("left", left + "px")
+                .style("top", top + "px");
+            }
+          });
+      });
+      
+      // Add click handler separately only for expandable nodes
+      interactiveRect
+        .filter(d => d.children || d._children)
+        .on("click.expand", handleExpandCollapse);
+    }
 
     const nodeUpdate = nodeEnter.merge(node);
 
     nodeUpdate.select(".expand-circle")
       .attr("fill", d => d.children ? "#ff6b6b" : "#4ecdc4");
+      
     nodeUpdate.select(".expand-indicator")
       .text(d => d.children ? "−" : "+");
-    nodeUpdate.select(".node-name")
-      .style("cursor", "default");
 
     nodeUpdate.transition().duration(300)
       .attr("transform", d => `translate(${d.y},${d.x - minX + offsetY})`);
@@ -574,14 +744,42 @@ function drawForest() {
   }
 }
 
-document.getElementById("toggleExpand").addEventListener("click", () => {
-  expandAll = !expandAll;
-  drawForest('toggle');
+// Global click handler to hide tooltips when clicking outside
+document.addEventListener('click', function(event) {
+  if (isMobile && !tooltip.node().contains(event.target) && 
+      !event.target.closest('.node') && !event.target.closest('.expand-circle')) {
+    hideTooltip();
+  }
 });
 
-window.addEventListener("resize", () => {
-  if (allRoots.length === 0) return;
-  drawForest();
+// Prevent default touch behaviors that might interfere - but allow pinch zoom
+document.addEventListener('touchstart', function(event) {
+  // Only prevent default for expand circles and interactive rects, not general touch
+  if (event.target.closest('.expand-circle') || event.target.closest('.node-interactive')) {
+    // Allow multi-touch for pinch zoom
+    if (event.touches.length === 1) {
+      event.preventDefault();
+    }
+  }
+}, { passive: false });
+
+// Handle tooltip mouse events on desktop
+tooltip
+  .on("mouseenter", function() {
+    if (!isMobile) {
+      clearTimeout(tooltipTimeout);
+    }
+  })
+  .on("mouseleave", function() {
+    if (!isMobile) {
+      hideTooltip();
+    }
+  });
+
+document.getElementById("toggleExpand").addEventListener("click", () => {
+  expandAll = !expandAll;
+  hideTooltip(); // Hide any open tooltips when toggling
+  drawForest('toggle');
 });
 </script>
 </body>
